@@ -6,27 +6,24 @@
 #include "Animation/InputScaleBias.h"
 #include "LbbLayeredBlendBodyTypes.generated.h"
 
-namespace LbbLayeredBlendBodyPart
+struct FLbbSlotNodeData
 {
-	struct FSlotNodeData
+	FName SlotNodeName = NAME_None;
+	float SlotNodeWeight = 0.f;
+	float SourceWeight = 0.f;
+	float TotalNodeWeight = 0.f;
+
+	FLbbSlotNodeData() = default;
+	explicit FLbbSlotNodeData(const FName& InSlotNodeName)
+		: SlotNodeName(InSlotNodeName)
 	{
-		FName SlotNodeName = NAME_None;
-		float SlotNodeWeight = 0.f;
-		float SourceWeight = 0.f;
-		float TotalNodeWeight = 0.f;
+	}
 
-		FSlotNodeData() = default;
-		explicit FSlotNodeData(const FName& InSlotNodeName)
-			: SlotNodeName(InSlotNodeName)
-		{
-		}
-
-		bool HasSlotNodeBlending() const
-		{
-			return !SlotNodeName.IsNone() && SlotNodeWeight > ZERO_ANIMWEIGHT_THRESH;
-		}
-	};
-}
+	bool HasSlotNodeBlending() const
+	{
+		return !SlotNodeName.IsNone() && SlotNodeWeight > ZERO_ANIMWEIGHT_THRESH;
+	}
+};
 
 /// ==============================
 ///				Enum
@@ -119,15 +116,15 @@ enum class ELbbLayeredBodyPartPoseSourceType : uint8
 	Motion,
 	BasePose,
 	OverlayPose,
-	OutputPose,
-	TemporaryPose,
+	CurrentPose,
+	CachePose,
 };
 
 UENUM(BlueprintType)
 enum class ELbbLayeredBodyPartPoseTargetType : uint8
 {
-	OutputPose,
-	TemporaryPose,
+	CurrentPose,
+	CachePose,
 };
 
 USTRUCT(BlueprintType)
@@ -136,10 +133,10 @@ struct FLbbLayeredBodyPartPoseSource
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
-	ELbbLayeredBodyPartPoseSourceType Type = ELbbLayeredBodyPartPoseSourceType::OutputPose;
+	ELbbLayeredBodyPartPoseSourceType Type = ELbbLayeredBodyPartPoseSourceType::CurrentPose;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose", meta = (EditCondition = "Type == ELbbLayeredBodyPartPoseSourceType::TemporaryPose", EditConditionHides))
-	FName TemporaryPoseName = NAME_None;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose", meta = (EditCondition = "Type == ELbbLayeredBodyPartPoseSourceType::CachePose", EditConditionHides))
+	FName CachePoseName = NAME_None;
 };
 
 USTRUCT(BlueprintType)
@@ -148,8 +145,8 @@ struct FLbbLayeredBodyPartPoseTarget
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose")
-	ELbbLayeredBodyPartPoseTargetType Type = ELbbLayeredBodyPartPoseTargetType::OutputPose;
+	ELbbLayeredBodyPartPoseTargetType Type = ELbbLayeredBodyPartPoseTargetType::CurrentPose;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose", meta = (EditCondition = "Type == ELbbLayeredBodyPartPoseTargetType::TemporaryPose", EditConditionHides))
-	FName TemporaryPoseName = NAME_None;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose", meta = (EditCondition = "Type == ELbbLayeredBodyPartPoseTargetType::CachePose", EditConditionHides))
+	FName CachePoseName = NAME_None;
 };

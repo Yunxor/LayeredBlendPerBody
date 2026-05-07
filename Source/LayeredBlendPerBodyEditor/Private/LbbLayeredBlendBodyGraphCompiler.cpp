@@ -1,178 +1,126 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "LbbLayeredBlendBodyGraphCompiler.h"
+
 #include "LbbLayeredBlendBodyDefinition.h"
+#include "LbbLayeredBlendBodyGraphNodeRegistry.h"
+#include "LbbLayeredBlendBodyOperators.h"
 
-namespace LbbLayeredBlendBodyPartEditor
+namespace
 {
-	namespace
+	const FName PinPose(TEXT("Pose"));
+	const FName PinInput(TEXT("Input"));
+	static constexpr TCHAR InternalCachePosePrefix[] = TEXT("__LbbInternalCache_");
+
+	struct FPinTargetKey
 	{
-		const FName PinPose(TEXT("Pose"));
-		const FName PinInput(TEXT("Input"));
-		const FName PinBase(TEXT("Base"));
-		const FName PinBlend(TEXT("Blend"));
-		const FName PinResult(TEXT("Result"));
+		FGuid NodeGuid;
+		FName PinName = NAME_None;
 
-		struct FPinTargetKey
+		bool operator==(const FPinTargetKey& Other) const
 		{
-			FGuid NodeGuid;
-			FName PinName = NAME_None;
+			return NodeGuid == Other.NodeGuid && PinName == Other.PinName;
+		}
+	};
 
-			bool operator==(const FPinTargetKey& Other) const
+	uint32 GetTypeHash(const FPinTargetKey& Key)
+	{
+		return HashCombine(GetTypeHash(Key.NodeGuid), GetTypeHash(Key.PinName));
+	}
+
+	struct FGraphContext
+	{
+		const FLbbLayeredBlendBodyGraphModelBase& GraphModel;
+		ELbbLayeredBlendBodyGraphKind GraphKind = ELbbLayeredBlendBodyGraphKind::BodyPart;
+		TMap<FGuid, const FLbbLayeredBlendBodyGraphNodeModel*> NodesByGuid;
+		TMap<FGuid, const FLbbLayeredBlendBodyGraphNodeDescriptor*> DescriptorsByGuid;
+		TMap<FPinTargetKey, const FLbbLayeredBlendBodyGraphLinkModel*> InputLinks;
+		const FLbbLayeredBlendBodyGraphNodeModel* ResultNode = nullptr;
+		TArray<const FLbbLayeredBlendBodyGraphNodeModel*> SavePoseNodes;
+
+		FGraphContext(const FLbbLayeredBlendBodyGraphModelBase& InGraphModel, const ELbbLayeredBlendBodyGraphKind InGraphKind)
+			: GraphModel(InGraphModel)
+			, GraphKind(InGraphKind)
+		{
+		}
+	};
+
+	struct FCompiledCacheGraph
+	{
+		TArray<FName> NamedCacheNames;
+		TArray<FInstancedStruct> Operators;
+	};
+
+	static bool HasErrors(const TArray<FLbbCompileMessage>& Messages)
+	{
+		for (const FLbbCompileMessage& Message : Messages)
+		{
+			if (Message.Severity == EMessageSeverity::Error)
 			{
-				return NodeGuid == Other.NodeGuid && PinName == Other.PinName;
-			}
-		};
-
-		uint32 GetTypeHash(const FPinTargetKey& Key)
-		{
-			return HashCombine(GetTypeHash(Key.NodeGuid), GetTypeHash(Key.PinName));
-		}
-
-		struct FGraphContext
-		{
-			const FLbbLayeredBlendBodyPartGraphModel& GraphModel;
-			TMap<FGuid, const FLbbLayeredBlendBodyGraphNodeModel*> NodesByGuid;
-			TMap<FPinTargetKey, const FLbbLayeredBlendBodyGraphLinkModel*> InputLinks;
-			const FLbbLayeredBlendBodyGraphNodeModel* CurrentPoseNode = nullptr;
-			const FLbbLayeredBlendBodyGraphNodeModel* MotionNode = nullptr;
-			const FLbbLayeredBlendBodyGraphNodeModel* BasePoseNode = nullptr;
-			const FLbbLayeredBlendBodyGraphNodeModel* OverlayPoseNode = nullptr;
-			const FLbbLayeredBlendBodyGraphNodeModel* ResultNode = nullptr;
-
-			explicit FGraphContext(const FLbbLayeredBlendBodyPartGraphModel& InGraphModel)
-				: GraphModel(InGraphModel)
-			{
-			}
-		};
-
-		static bool HasErrors(const TArray<FCompileMessage>& Messages)
-		{
-			for (const FCompileMessage& Message : Messages)
-			{
-				if (Message.Severity == EMessageSeverity::Error)
-				{
-					return true;
-				}
-			}
-
-			return false;
-		}
-
-		static void AddMessage(
-			TArray<FCompileMessage>& OutMessages,
-			const EMessageSeverity::Type Severity,
-			const int32 BodyPartIndex,
-			const FGuid& NodeGuid,
-			const FString& Message)
-		{
-			FCompileMessage& NewMessage = OutMessages.AddDefaulted_GetRef();
-			NewMessage.Severity = Severity;
-			NewMessage.BodyPartIndex = BodyPartIndex;
-			NewMessage.NodeGuid = NodeGuid;
-			NewMessage.Message = Message;
-		}
-
-		static bool IsFixedNodeType(const ELbbLayeredBlendBodyGraphNodeType NodeType)
-		{
-			return NodeType == ELbbLayeredBlendBodyGraphNodeType::CurrentPose
-				|| NodeType == ELbbLayeredBlendBodyGraphNodeType::Motion
-				|| NodeType == ELbbLayeredBlendBodyGraphNodeType::BasePose
-				|| NodeType == ELbbLayeredBlendBodyGraphNodeType::OverlayPose;
-		}
-
-		static bool IsAuthorNodeType(const ELbbLayeredBlendBodyGraphNodeType NodeType)
-		{
-			return NodeType == ELbbLayeredBlendBodyGraphNodeType::ApplySlot
-				|| NodeType == ELbbLayeredBlendBodyGraphNodeType::Blend
-				|| NodeType == ELbbLayeredBlendBodyGraphNodeType::MaskedBlend
-				|| NodeType == ELbbLayeredBlendBodyGraphNodeType::ApplyMotionDelta;
-		}
-
-		static void GetInputPinNames(const ELbbLayeredBlendBodyGraphNodeType NodeType, TArray<FName, TInlineAllocator<2>>& OutPinNames)
-		{
-			OutPinNames.Reset();
-
-			switch (NodeType)
-			{
-			case ELbbLayeredBlendBodyGraphNodeType::Result:
-				OutPinNames.Add(PinPose);
-				break;
-			case ELbbLayeredBlendBodyGraphNodeType::ApplySlot:
-				OutPinNames.Add(PinInput);
-				break;
-			case ELbbLayeredBlendBodyGraphNodeType::Blend:
-			case ELbbLayeredBlendBodyGraphNodeType::MaskedBlend:
-				OutPinNames.Add(PinBase);
-				OutPinNames.Add(PinBlend);
-				break;
-			case ELbbLayeredBlendBodyGraphNodeType::ApplyMotionDelta:
-				OutPinNames.Add(PinBase);
-				break;
-			default:
-				break;
+				return true;
 			}
 		}
 
-		static void GetOutputPinNames(const ELbbLayeredBlendBodyGraphNodeType NodeType, TArray<FName, TInlineAllocator<1>>& OutPinNames)
-		{
-			OutPinNames.Reset();
+		return false;
+	}
 
-			switch (NodeType)
-			{
-			case ELbbLayeredBlendBodyGraphNodeType::CurrentPose:
-			case ELbbLayeredBlendBodyGraphNodeType::Motion:
-			case ELbbLayeredBlendBodyGraphNodeType::BasePose:
-			case ELbbLayeredBlendBodyGraphNodeType::OverlayPose:
-				OutPinNames.Add(PinPose);
-				break;
-			case ELbbLayeredBlendBodyGraphNodeType::ApplySlot:
-			case ELbbLayeredBlendBodyGraphNodeType::Blend:
-			case ELbbLayeredBlendBodyGraphNodeType::MaskedBlend:
-			case ELbbLayeredBlendBodyGraphNodeType::ApplyMotionDelta:
-				OutPinNames.Add(PinResult);
-				break;
-			default:
-				break;
-			}
-		}
+	static void AddMessage(
+		TArray<FLbbCompileMessage>& OutMessages,
+		const EMessageSeverity::Type Severity,
+		const ELbbLayeredBlendBodyGraphKind GraphKind,
+		const int32 BodyPartIndex,
+		const FGuid& NodeGuid,
+		const FString& Message)
+	{
+		FLbbCompileMessage& NewMessage = OutMessages.AddDefaulted_GetRef();
+		NewMessage.Severity = Severity;
+		NewMessage.GraphKind = GraphKind;
+		NewMessage.BodyPartIndex = BodyPartIndex;
+		NewMessage.NodeGuid = NodeGuid;
+		NewMessage.Message = Message;
+	}
 
-		static bool IsValidInputPin(const ELbbLayeredBlendBodyGraphNodeType NodeType, const FName PinName)
-		{
-			TArray<FName, TInlineAllocator<2>> InputPins;
-			GetInputPinNames(NodeType, InputPins);
-			return InputPins.Contains(PinName);
-		}
+	static const FLbbLayeredBlendBodyGraphNodeDescriptor* FindDescriptor(
+		const FGraphContext& GraphContext,
+		const FGuid& NodeGuid)
+	{
+		return GraphContext.DescriptorsByGuid.FindRef(NodeGuid);
+	}
 
-		static bool IsValidOutputPin(const ELbbLayeredBlendBodyGraphNodeType NodeType, const FName PinName)
-		{
-			TArray<FName, TInlineAllocator<1>> OutputPins;
-			GetOutputPinNames(NodeType, OutputPins);
-			return OutputPins.Contains(PinName);
-		}
+	static bool IsValidInputPin(const FLbbLayeredBlendBodyGraphNodeDescriptor& Descriptor, const FName PinName)
+	{
+		return Descriptor.GetInputPins().Contains(PinName);
+	}
 
-		static const FLbbLayeredBlendBodyGraphLinkModel* FindInputLink(
-			const FGraphContext& GraphContext,
+	static bool IsValidOutputPin(const FLbbLayeredBlendBodyGraphNodeDescriptor& Descriptor, const FName PinName)
+	{
+		return Descriptor.GetOutputPins().Contains(PinName);
+	}
+
+	static const FLbbLayeredBlendBodyGraphLinkModel* FindInputLink(
+		const FGraphContext& GraphContext,
 			const FGuid& NodeGuid,
 			const FName& PinName)
 		{
 			return GraphContext.InputLinks.FindRef(FPinTargetKey{NodeGuid, PinName});
 		}
 
+		template <typename NodeDataType>
 		static FGuid AddNode(
-			FLbbLayeredBlendBodyPartGraphModel& GraphModel,
-			const ELbbLayeredBlendBodyGraphNodeType NodeType,
-			const FVector2D& Position)
+			FLbbLayeredBlendBodyGraphModelBase& GraphModel,
+			const FVector2D& Position,
+			TFunctionRef<void(NodeDataType&)> InitializeNode)
 		{
 			FLbbLayeredBlendBodyGraphNodeModel& NodeModel = GraphModel.Nodes.AddDefaulted_GetRef();
 			NodeModel.NodeGuid = FGuid::NewGuid();
-			NodeModel.NodeType = NodeType;
 			NodeModel.NodePosition = Position;
+			NodeModel.NodeData.InitializeAs<NodeDataType>();
+			InitializeNode(NodeModel.NodeData.GetMutable<NodeDataType>());
 			return NodeModel.NodeGuid;
 		}
 
 		static void AddLink(
-			FLbbLayeredBlendBodyPartGraphModel& GraphModel,
+			FLbbLayeredBlendBodyGraphModelBase& GraphModel,
 			const FGuid& FromNodeGuid,
 			const FName& FromPinName,
 			const FGuid& ToNodeGuid,
@@ -185,130 +133,168 @@ namespace LbbLayeredBlendBodyPartEditor
 			Link.ToPinName = ToPinName;
 		}
 
-		static FName MakeTempPoseName(const int32 TempIndex)
+		static bool IsAllowedInputSource(
+			const ELbbLayeredBlendBodyGraphKind GraphKind,
+			const ELbbLayeredBodyPartPoseSourceType SourceType)
 		{
-			return FName(*FString::Printf(TEXT("__GraphTemp_%d"), TempIndex));
-		}
-
-		static FLbbLayeredBodyPartPoseSource MakeSourceFromFixedNodeType(const ELbbLayeredBlendBodyGraphNodeType NodeType)
-		{
-			FLbbLayeredBodyPartPoseSource SourcePose;
-
-			switch (NodeType)
+			if (GraphKind == ELbbLayeredBlendBodyGraphKind::Cache)
 			{
-			case ELbbLayeredBlendBodyGraphNodeType::CurrentPose:
-				SourcePose.Type = ELbbLayeredBodyPartPoseSourceType::OutputPose;
-				break;
-			case ELbbLayeredBlendBodyGraphNodeType::Motion:
-				SourcePose.Type = ELbbLayeredBodyPartPoseSourceType::Motion;
-				break;
-			case ELbbLayeredBlendBodyGraphNodeType::BasePose:
-				SourcePose.Type = ELbbLayeredBodyPartPoseSourceType::BasePose;
-				break;
-			case ELbbLayeredBlendBodyGraphNodeType::OverlayPose:
-				SourcePose.Type = ELbbLayeredBodyPartPoseSourceType::OverlayPose;
-				break;
-			default:
-				SourcePose.Type = ELbbLayeredBodyPartPoseSourceType::OutputPose;
-				break;
+				return SourceType == ELbbLayeredBodyPartPoseSourceType::Motion
+					|| SourceType == ELbbLayeredBodyPartPoseSourceType::BasePose
+					|| SourceType == ELbbLayeredBodyPartPoseSourceType::OverlayPose;
 			}
 
-			return SourcePose;
+			return true;
 		}
 
-		static FLbbLayeredBodyPartPoseTarget MakeOutputTarget()
+		static bool IsReservedInternalCachePoseName(const FName CachePoseName)
+		{
+			return CachePoseName.ToString().StartsWith(InternalCachePosePrefix);
+		}
+
+		static FString BuildInternalCacheScopeName(
+			const ELbbLayeredBlendBodyGraphKind GraphKind,
+			const int32 BodyPartIndex)
+		{
+			return GraphKind == ELbbLayeredBlendBodyGraphKind::Cache
+				? TEXT("CacheGraph")
+				: FString::Printf(TEXT("BodyPart_%d"), BodyPartIndex);
+		}
+
+		static FName MakeInternalCachePoseName(const FString& ScopeName, const int32 CacheIndex)
+		{
+			return FName(*FString::Printf(TEXT("%s%s_%d"), InternalCachePosePrefix, *ScopeName, CacheIndex));
+		}
+
+		static FName AllocateInternalCachePoseName(
+			const FString& ScopeName,
+			const int32 SuggestedIndex,
+			const TSet<FName>& ReservedUserCacheNames,
+			TSet<FName>& UsedInternalCacheNames)
+		{
+			int32 CandidateIndex = SuggestedIndex;
+			while (true)
+			{
+				const FName CandidateName = MakeInternalCachePoseName(ScopeName, CandidateIndex);
+				if (!ReservedUserCacheNames.Contains(CandidateName) && !UsedInternalCacheNames.Contains(CandidateName))
+				{
+					UsedInternalCacheNames.Add(CandidateName);
+					return CandidateName;
+				}
+
+				++CandidateIndex;
+			}
+		}
+
+		static FLbbLayeredBodyPartPoseTarget MakeCurrentPoseTarget()
 		{
 			FLbbLayeredBodyPartPoseTarget Target;
-			Target.Type = ELbbLayeredBodyPartPoseTargetType::OutputPose;
+			Target.Type = ELbbLayeredBodyPartPoseTargetType::CurrentPose;
 			return Target;
 		}
 
-		static FLbbLayeredBodyPartPoseTarget MakeTemporaryTarget(const int32 TempIndex)
+		static FLbbLayeredBodyPartPoseTarget MakeCachePoseTarget(const FName CachePoseName)
 		{
 			FLbbLayeredBodyPartPoseTarget Target;
-			Target.Type = ELbbLayeredBodyPartPoseTargetType::TemporaryPose;
-			Target.TemporaryPoseName = MakeTempPoseName(TempIndex);
+			Target.Type = ELbbLayeredBodyPartPoseTargetType::CachePose;
+			Target.CachePoseName = CachePoseName;
 			return Target;
 		}
 
-		static FLbbLayeredBodyPartPoseSource MakeTemporarySource(const int32 TempIndex)
+		static FLbbLayeredBodyPartPoseSource MakeCachePoseSource(const FName CachePoseName)
 		{
 			FLbbLayeredBodyPartPoseSource Source;
-			Source.Type = ELbbLayeredBodyPartPoseSourceType::TemporaryPose;
-			Source.TemporaryPoseName = MakeTempPoseName(TempIndex);
+			Source.Type = ELbbLayeredBodyPartPoseSourceType::CachePose;
+			Source.CachePoseName = CachePoseName;
 			return Source;
 		}
 
 		static bool BuildGraphContext(
-			const FLbbLayeredBlendBodyPartGraphModel& GraphModel,
+			const FLbbLayeredBlendBodyGraphModelBase& GraphModel,
+			const ELbbLayeredBlendBodyGraphKind GraphKind,
 			const int32 BodyPartIndex,
-			TArray<FCompileMessage>& OutMessages,
+			TArray<FLbbCompileMessage>& OutMessages,
 			FGraphContext& OutGraphContext)
 		{
-			TMap<ELbbLayeredBlendBodyGraphNodeType, int32> FixedNodeCounts;
+			TMap<const UScriptStruct*, int32> SingletonNodeCounts;
 
 			for (const FLbbLayeredBlendBodyGraphNodeModel& NodeModel : GraphModel.Nodes)
 			{
 				if (!NodeModel.NodeGuid.IsValid())
 				{
-					AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("NodeGuid is invalid."));
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphKind, BodyPartIndex, NodeModel.NodeGuid, TEXT("NodeGuid is invalid."));
 					continue;
 				}
 
 				if (OutGraphContext.NodesByGuid.Contains(NodeModel.NodeGuid))
 				{
-					AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Duplicate NodeGuid detected."));
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphKind, BodyPartIndex, NodeModel.NodeGuid, TEXT("Duplicate NodeGuid detected."));
+					continue;
+				}
+
+				const UScriptStruct* NodeDataStruct = NodeModel.NodeData.GetScriptStruct();
+				const FLbbLayeredBlendBodyGraphNodeDescriptor* Descriptor = FindLbbLayeredBlendBodyGraphNodeDescriptor(NodeDataStruct);
+				if (Descriptor == nullptr)
+				{
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphKind, BodyPartIndex, NodeModel.NodeGuid, TEXT("NodeData uses an unsupported graph node struct."));
+					continue;
+				}
+
+				if (!Descriptor->IsAllowedInGraph(GraphKind))
+				{
+					AddMessage(
+						OutMessages,
+						EMessageSeverity::Error,
+						GraphKind,
+						BodyPartIndex,
+						NodeModel.NodeGuid,
+						FString::Printf(TEXT("Node '%s' is not allowed in this graph."), Descriptor->DisplayName));
 					continue;
 				}
 
 				OutGraphContext.NodesByGuid.Add(NodeModel.NodeGuid, &NodeModel);
+				OutGraphContext.DescriptorsByGuid.Add(NodeModel.NodeGuid, Descriptor);
 
-				switch (NodeModel.NodeType)
+				if (Descriptor->bIsResultNode)
 				{
-				case ELbbLayeredBlendBodyGraphNodeType::CurrentPose:
-					OutGraphContext.CurrentPoseNode = &NodeModel;
-					FixedNodeCounts.FindOrAdd(NodeModel.NodeType)++;
-					break;
-				case ELbbLayeredBlendBodyGraphNodeType::Motion:
-					OutGraphContext.MotionNode = &NodeModel;
-					FixedNodeCounts.FindOrAdd(NodeModel.NodeType)++;
-					break;
-				case ELbbLayeredBlendBodyGraphNodeType::BasePose:
-					OutGraphContext.BasePoseNode = &NodeModel;
-					FixedNodeCounts.FindOrAdd(NodeModel.NodeType)++;
-					break;
-				case ELbbLayeredBlendBodyGraphNodeType::OverlayPose:
-					OutGraphContext.OverlayPoseNode = &NodeModel;
-					FixedNodeCounts.FindOrAdd(NodeModel.NodeType)++;
-					break;
-				case ELbbLayeredBlendBodyGraphNodeType::Result:
 					OutGraphContext.ResultNode = &NodeModel;
-					FixedNodeCounts.FindOrAdd(NodeModel.NodeType)++;
-					break;
-				default:
-					break;
+				}
+
+				if (Descriptor->bIsSavePoseNode)
+				{
+					OutGraphContext.SavePoseNodes.Add(&NodeModel);
+				}
+
+				if (Descriptor->IsSingletonInGraph(GraphKind))
+				{
+					SingletonNodeCounts.FindOrAdd(Descriptor->NodeDataStruct)++;
 				}
 			}
 
-			auto ValidateFixedNodeCount = [&OutMessages, BodyPartIndex, &FixedNodeCounts](const ELbbLayeredBlendBodyGraphNodeType NodeType, const TCHAR* NodeDisplayName)
+			for (const FLbbLayeredBlendBodyGraphNodeDescriptor& Descriptor : GetLbbLayeredBlendBodyGraphNodeDescriptors())
 			{
-				const int32 Count = FixedNodeCounts.FindRef(NodeType);
+				if (!Descriptor.IsSingletonInGraph(GraphKind))
+				{
+					continue;
+				}
+
+				const int32 Count = SingletonNodeCounts.FindRef(Descriptor.NodeDataStruct);
 				if (Count != 1)
 				{
 					AddMessage(
 						OutMessages,
 						EMessageSeverity::Error,
+						GraphKind,
 						BodyPartIndex,
 						FGuid(),
-						FString::Printf(TEXT("Expected exactly one '%s' node, found %d."), NodeDisplayName, Count));
+						FString::Printf(TEXT("Expected exactly one '%s' node, found %d."), Descriptor.DisplayName, Count));
 				}
-			};
+			}
 
-			ValidateFixedNodeCount(ELbbLayeredBlendBodyGraphNodeType::CurrentPose, TEXT("Current Pose"));
-			ValidateFixedNodeCount(ELbbLayeredBlendBodyGraphNodeType::Motion, TEXT("Motion"));
-			ValidateFixedNodeCount(ELbbLayeredBlendBodyGraphNodeType::BasePose, TEXT("Base Pose"));
-			ValidateFixedNodeCount(ELbbLayeredBlendBodyGraphNodeType::OverlayPose, TEXT("Overlay Pose"));
-			ValidateFixedNodeCount(ELbbLayeredBlendBodyGraphNodeType::Result, TEXT("Result"));
+			if (GraphKind == ELbbLayeredBlendBodyGraphKind::Cache && GraphModel.Nodes.Num() > 0 && OutGraphContext.SavePoseNodes.IsEmpty())
+			{
+				AddMessage(OutMessages, EMessageSeverity::Error, GraphKind, BodyPartIndex, FGuid(), TEXT("Cache Graph requires at least one Save Pose node."));
+			}
 
 			for (const FLbbLayeredBlendBodyGraphLinkModel& LinkModel : GraphModel.Links)
 			{
@@ -316,26 +302,36 @@ namespace LbbLayeredBlendBodyPartEditor
 				const FLbbLayeredBlendBodyGraphNodeModel* const* ToNodePtr = OutGraphContext.NodesByGuid.Find(LinkModel.ToNodeGuid);
 				if (FromNodePtr == nullptr || ToNodePtr == nullptr)
 				{
-					AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, FGuid(), TEXT("A link references a missing node."));
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphKind, BodyPartIndex, FGuid(), TEXT("A link references a missing node."));
 					continue;
 				}
 
-				if (!IsValidOutputPin((*FromNodePtr)->NodeType, LinkModel.FromPinName))
+				const FLbbLayeredBlendBodyGraphNodeDescriptor* FromDescriptor = FindDescriptor(OutGraphContext, LinkModel.FromNodeGuid);
+				const FLbbLayeredBlendBodyGraphNodeDescriptor* ToDescriptor = FindDescriptor(OutGraphContext, LinkModel.ToNodeGuid);
+				if (FromDescriptor == nullptr || ToDescriptor == nullptr)
+				{
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphKind, BodyPartIndex, FGuid(), TEXT("A link references an unsupported node."));
+					continue;
+				}
+
+				if (!IsValidOutputPin(*FromDescriptor, LinkModel.FromPinName))
 				{
 					AddMessage(
 						OutMessages,
 						EMessageSeverity::Error,
+						GraphKind,
 						BodyPartIndex,
 						LinkModel.FromNodeGuid,
 						FString::Printf(TEXT("Invalid output pin '%s'."), *LinkModel.FromPinName.ToString()));
 					continue;
 				}
 
-				if (!IsValidInputPin((*ToNodePtr)->NodeType, LinkModel.ToPinName))
+				if (!IsValidInputPin(*ToDescriptor, LinkModel.ToPinName))
 				{
 					AddMessage(
 						OutMessages,
 						EMessageSeverity::Error,
+						GraphKind,
 						BodyPartIndex,
 						LinkModel.ToNodeGuid,
 						FString::Printf(TEXT("Invalid input pin '%s'."), *LinkModel.ToPinName.ToString()));
@@ -348,6 +344,7 @@ namespace LbbLayeredBlendBodyPartEditor
 					AddMessage(
 						OutMessages,
 						EMessageSeverity::Error,
+						GraphKind,
 						BodyPartIndex,
 						LinkModel.ToNodeGuid,
 						FString::Printf(TEXT("Input pin '%s' has more than one connection."), *LinkModel.ToPinName.ToString()));
@@ -368,7 +365,7 @@ namespace LbbLayeredBlendBodyPartEditor
 			TSet<FGuid>& VisitingNodes,
 			TSet<FGuid>& VisitedNodes,
 			TArray<FGuid>& OutTopoAuthorNodes,
-			TArray<FCompileMessage>& OutMessages)
+			TArray<FLbbCompileMessage>& OutMessages)
 		{
 			if (VisitedNodes.Contains(NodeModel.NodeGuid))
 			{
@@ -377,17 +374,21 @@ namespace LbbLayeredBlendBodyPartEditor
 
 			if (VisitingNodes.Contains(NodeModel.NodeGuid))
 			{
-				AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Cycle detected in body part graph."));
+				AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, NodeModel.NodeGuid, TEXT("Cycle detected in graph."));
+				return false;
+			}
+
+			const FLbbLayeredBlendBodyGraphNodeDescriptor* Descriptor = FindDescriptor(GraphContext, NodeModel.NodeGuid);
+			if (Descriptor == nullptr)
+			{
+				AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, NodeModel.NodeGuid, TEXT("Node descriptor is missing."));
 				return false;
 			}
 
 			VisitingNodes.Add(NodeModel.NodeGuid);
 			ReachableNodes.Add(NodeModel.NodeGuid);
 
-			TArray<FName, TInlineAllocator<2>> RequiredInputPins;
-			GetInputPinNames(NodeModel.NodeType, RequiredInputPins);
-
-			for (const FName& InputPinName : RequiredInputPins)
+			for (const FName& InputPinName : Descriptor->GetInputPins())
 			{
 				const FLbbLayeredBlendBodyGraphLinkModel* InputLink = FindInputLink(GraphContext, NodeModel.NodeGuid, InputPinName);
 				if (InputLink == nullptr)
@@ -395,6 +396,7 @@ namespace LbbLayeredBlendBodyPartEditor
 					AddMessage(
 						OutMessages,
 						EMessageSeverity::Error,
+						GraphContext.GraphKind,
 						BodyPartIndex,
 						NodeModel.NodeGuid,
 						FString::Printf(TEXT("Required input pin '%s' is not connected."), *InputPinName.ToString()));
@@ -404,7 +406,7 @@ namespace LbbLayeredBlendBodyPartEditor
 				const FLbbLayeredBlendBodyGraphNodeModel* const* SourceNodePtr = GraphContext.NodesByGuid.Find(InputLink->FromNodeGuid);
 				if (SourceNodePtr == nullptr)
 				{
-					AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Input link references a missing source node."));
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, NodeModel.NodeGuid, TEXT("Input link references a missing source node."));
 					continue;
 				}
 
@@ -414,7 +416,7 @@ namespace LbbLayeredBlendBodyPartEditor
 			VisitingNodes.Remove(NodeModel.NodeGuid);
 			VisitedNodes.Add(NodeModel.NodeGuid);
 
-			if (IsAuthorNodeType(NodeModel.NodeType))
+			if (Descriptor->IsAuthorNode())
 			{
 				OutTopoAuthorNodes.Add(NodeModel.NodeGuid);
 			}
@@ -428,45 +430,87 @@ namespace LbbLayeredBlendBodyPartEditor
 			TSet<FGuid>& OutReachableNodes,
 			TArray<FGuid>& OutTopoAuthorNodes,
 			FGuid& OutFinalSourceGuid,
-			TArray<FCompileMessage>& OutMessages)
+			TArray<FLbbCompileMessage>& OutMessages)
 		{
-			check(GraphContext.ResultNode != nullptr);
-
-			const FLbbLayeredBlendBodyGraphLinkModel* ResultInputLink = FindInputLink(GraphContext, GraphContext.ResultNode->NodeGuid, PinPose);
-			if (ResultInputLink == nullptr)
-			{
-				AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, GraphContext.ResultNode->NodeGuid, TEXT("Result node is not connected."));
-				return false;
-			}
-
-			const FLbbLayeredBlendBodyGraphNodeModel* const* FinalSourceNodePtr = GraphContext.NodesByGuid.Find(ResultInputLink->FromNodeGuid);
-			if (FinalSourceNodePtr == nullptr)
-			{
-				AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, GraphContext.ResultNode->NodeGuid, TEXT("Result node references a missing source node."));
-				return false;
-			}
-
-			OutFinalSourceGuid = (*FinalSourceNodePtr)->NodeGuid;
-
 			TSet<FGuid> VisitingNodes;
 			TSet<FGuid> VisitedNodes;
-			VisitNode(GraphContext, **FinalSourceNodePtr, BodyPartIndex, OutReachableNodes, VisitingNodes, VisitedNodes, OutTopoAuthorNodes, OutMessages);
+
+			if (GraphContext.GraphKind == ELbbLayeredBlendBodyGraphKind::BodyPart)
+			{
+				check(GraphContext.ResultNode != nullptr);
+
+				const FLbbLayeredBlendBodyGraphLinkModel* ResultInputLink = FindInputLink(GraphContext, GraphContext.ResultNode->NodeGuid, PinPose);
+				if (ResultInputLink == nullptr)
+				{
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, GraphContext.ResultNode->NodeGuid, TEXT("Result node is not connected."));
+					return false;
+				}
+
+				const FLbbLayeredBlendBodyGraphNodeModel* const* FinalSourceNodePtr = GraphContext.NodesByGuid.Find(ResultInputLink->FromNodeGuid);
+				if (FinalSourceNodePtr == nullptr)
+				{
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, GraphContext.ResultNode->NodeGuid, TEXT("Result node references a missing source node."));
+					return false;
+				}
+
+				OutFinalSourceGuid = (*FinalSourceNodePtr)->NodeGuid;
+				VisitNode(GraphContext, **FinalSourceNodePtr, BodyPartIndex, OutReachableNodes, VisitingNodes, VisitedNodes, OutTopoAuthorNodes, OutMessages);
+			}
+			else
+			{
+				for (const FLbbLayeredBlendBodyGraphNodeModel* SavePoseNode : GraphContext.SavePoseNodes)
+				{
+					if (SavePoseNode == nullptr)
+					{
+						continue;
+					}
+
+					const FLbbLayeredBlendBodyGraphLinkModel* InputLink = FindInputLink(GraphContext, SavePoseNode->NodeGuid, PinInput);
+					if (InputLink == nullptr)
+					{
+						AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, SavePoseNode->NodeGuid, TEXT("Save Pose node is not connected."));
+						continue;
+					}
+
+					const FLbbLayeredBlendBodyGraphNodeModel* const* SourceNodePtr = GraphContext.NodesByGuid.Find(InputLink->FromNodeGuid);
+					if (SourceNodePtr == nullptr)
+					{
+						AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, SavePoseNode->NodeGuid, TEXT("Save Pose node references a missing source node."));
+						continue;
+					}
+
+					OutReachableNodes.Add(SavePoseNode->NodeGuid);
+					VisitNode(GraphContext, **SourceNodePtr, BodyPartIndex, OutReachableNodes, VisitingNodes, VisitedNodes, OutTopoAuthorNodes, OutMessages);
+					if (!VisitedNodes.Contains(SavePoseNode->NodeGuid))
+					{
+						VisitedNodes.Add(SavePoseNode->NodeGuid);
+						OutTopoAuthorNodes.Add(SavePoseNode->NodeGuid);
+					}
+				}
+			}
 
 			for (const FLbbLayeredBlendBodyGraphNodeModel& NodeModel : GraphContext.GraphModel.Nodes)
 			{
-				if (!OutReachableNodes.Contains(NodeModel.NodeGuid))
+				if (OutReachableNodes.Contains(NodeModel.NodeGuid))
 				{
-					if (!IsFixedNodeType(NodeModel.NodeType)
-						&& NodeModel.NodeType != ELbbLayeredBlendBodyGraphNodeType::Result)
-					{
-						AddMessage(
-							OutMessages,
-							EMessageSeverity::Warning,
-							BodyPartIndex,
-							NodeModel.NodeGuid,
-							TEXT("Dead node is not connected to Result."));
-					}
+					continue;
 				}
+
+				const FLbbLayeredBlendBodyGraphNodeDescriptor* Descriptor = FindDescriptor(GraphContext, NodeModel.NodeGuid);
+				if (Descriptor == nullptr || Descriptor->bIsResultNode)
+				{
+					continue;
+				}
+
+				AddMessage(
+					OutMessages,
+					EMessageSeverity::Warning,
+					GraphContext.GraphKind,
+					BodyPartIndex,
+					NodeModel.NodeGuid,
+					GraphContext.GraphKind == ELbbLayeredBlendBodyGraphKind::BodyPart
+						? TEXT("Dead node is not connected to Result.")
+						: TEXT("Dead node is not connected to any Save Pose node."));
 			}
 
 			return !HasErrors(OutMessages);
@@ -474,7 +518,11 @@ namespace LbbLayeredBlendBodyPartEditor
 
 		static bool TryResolveCompiledSource(
 			const FGraphContext& GraphContext,
-			const TMap<FGuid, int32>& TempPoseIndices,
+			const ELbbLayeredBlendBodyGraphKind GraphKind,
+			const TMap<FGuid, FName>& InternalCachePoseNames,
+			const TSet<FName>& ValidNamedCaches,
+			const int32 BodyPartIndex,
+			TArray<FLbbCompileMessage>& OutMessages,
 			const FGuid& SourceNodeGuid,
 			FLbbLayeredBodyPartPoseSource& OutSourcePose)
 		{
@@ -484,43 +532,138 @@ namespace LbbLayeredBlendBodyPartEditor
 				return false;
 			}
 
-			const FLbbLayeredBlendBodyGraphNodeModel& SourceNode = **SourceNodePtr;
-			if (IsFixedNodeType(SourceNode.NodeType))
+			const FLbbLayeredBlendBodyGraphNodeDescriptor* Descriptor = FindDescriptor(GraphContext, SourceNodeGuid);
+			if (Descriptor == nullptr)
 			{
-				OutSourcePose = MakeSourceFromFixedNodeType(SourceNode.NodeType);
+				return false;
+			}
+
+			if (Descriptor->bIsInputNode)
+			{
+				const FLbbLayeredBlendBodyGraphNodeData_Input* NodeData = (*SourceNodePtr)->NodeData.GetPtr<FLbbLayeredBlendBodyGraphNodeData_Input>();
+				if (NodeData == nullptr)
+				{
+					return false;
+				}
+
+				if (!IsAllowedInputSource(GraphKind, NodeData->SourcePose.Type))
+				{
+					AddMessage(
+						OutMessages,
+						EMessageSeverity::Error,
+						GraphKind,
+						BodyPartIndex,
+						SourceNodeGuid,
+						TEXT("Input node uses a source type that is not allowed in this graph."));
+					return false;
+				}
+
+				if (NodeData->SourcePose.Type == ELbbLayeredBodyPartPoseSourceType::CachePose)
+				{
+					if (NodeData->SourcePose.CachePoseName.IsNone())
+					{
+						AddMessage(OutMessages, EMessageSeverity::Error, GraphKind, BodyPartIndex, SourceNodeGuid, TEXT("Input(CachePose) requires a valid CachePoseName."));
+						return false;
+					}
+
+					if (!ValidNamedCaches.Contains(NodeData->SourcePose.CachePoseName))
+					{
+						AddMessage(
+							OutMessages,
+							EMessageSeverity::Error,
+							GraphKind,
+							BodyPartIndex,
+							SourceNodeGuid,
+							FString::Printf(TEXT("CachePose '%s' does not exist in Cache Graph."), *NodeData->SourcePose.CachePoseName.ToString()));
+						return false;
+					}
+				}
+
+				OutSourcePose = NodeData->SourcePose;
 				return true;
 			}
 
-			if (const int32* TempPoseIndex = TempPoseIndices.Find(SourceNodeGuid))
+			if (const FName* InternalCachePoseName = InternalCachePoseNames.Find(SourceNodeGuid))
 			{
-				OutSourcePose = MakeTemporarySource(*TempPoseIndex);
+				OutSourcePose = MakeCachePoseSource(*InternalCachePoseName);
 				return true;
 			}
 
 			return false;
 		}
 
-		template <typename OperatorType>
-		static void AddOperatorStruct(TArray<FInstancedStruct>& Operators, const OperatorType& Operator)
+		static bool CollectNamedCaches(
+			const FGraphContext& GraphContext,
+			const int32 BodyPartIndex,
+			FCompiledCacheGraph& OutCacheGraph,
+			TArray<FLbbCompileMessage>& OutMessages)
 		{
-			FInstancedStruct& OperatorData = Operators.AddDefaulted_GetRef();
-			OperatorData.InitializeAs<OperatorType>();
-			OperatorData.GetMutable<OperatorType>() = Operator;
+			TSet<FName> SeenNames;
+			for (const FLbbLayeredBlendBodyGraphNodeModel& NodeModel : GraphContext.GraphModel.Nodes)
+			{
+				const FLbbLayeredBlendBodyGraphNodeDescriptor* Descriptor = FindDescriptor(GraphContext, NodeModel.NodeGuid);
+				if (Descriptor == nullptr || !Descriptor->bIsSavePoseNode)
+				{
+					continue;
+				}
+
+				const FLbbLayeredBlendBodyGraphNodeData_SavePose* NodeData = NodeModel.NodeData.GetPtr<FLbbLayeredBlendBodyGraphNodeData_SavePose>();
+				if (NodeData == nullptr)
+				{
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, NodeModel.NodeGuid, TEXT("Save Pose node data is missing."));
+					continue;
+				}
+
+				if (NodeData->CachePoseName.IsNone())
+				{
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, NodeModel.NodeGuid, TEXT("Save Pose requires a valid CachePoseName."));
+					continue;
+				}
+
+				if (IsReservedInternalCachePoseName(NodeData->CachePoseName))
+				{
+					AddMessage(
+						OutMessages,
+						EMessageSeverity::Warning,
+						GraphContext.GraphKind,
+						BodyPartIndex,
+						NodeModel.NodeGuid,
+						TEXT("Save Pose uses a reserved internal cache prefix. The compiler will avoid collisions, but this name is reserved for internal slots."));
+				}
+
+				if (SeenNames.Contains(NodeData->CachePoseName))
+				{
+					AddMessage(
+						OutMessages,
+						EMessageSeverity::Error,
+						GraphContext.GraphKind,
+						BodyPartIndex,
+						NodeModel.NodeGuid,
+						FString::Printf(TEXT("Duplicate CachePoseName '%s'."), *NodeData->CachePoseName.ToString()));
+					continue;
+				}
+
+				SeenNames.Add(NodeData->CachePoseName);
+				OutCacheGraph.NamedCacheNames.Add(NodeData->CachePoseName);
+			}
+
+			return !HasErrors(OutMessages);
 		}
 
 		static bool CompileBodyPartGraph(
 			const FLbbLayeredBlendBodyPartGraphModel& GraphModel,
 			const int32 BodyPartIndex,
+			const TSet<FName>& ValidNamedCaches,
 			FLbbLayeredBlendBodyPart& OutBodyPart,
-			TArray<FCompileMessage>& OutMessages)
+			TArray<FLbbCompileMessage>& OutMessages)
 		{
 			OutBodyPart.PartName = GraphModel.PartName;
 #if WITH_EDITORONLY_DATA
 			OutBodyPart.DebugColor = GraphModel.DebugColor;
 #endif
 
-			FGraphContext GraphContext(GraphModel);
-			BuildGraphContext(GraphModel, BodyPartIndex, OutMessages, GraphContext);
+			FGraphContext GraphContext(GraphModel, ELbbLayeredBlendBodyGraphKind::BodyPart);
+			BuildGraphContext(GraphModel, GraphContext.GraphKind, BodyPartIndex, OutMessages, GraphContext);
 			if (HasErrors(OutMessages))
 			{
 				return false;
@@ -535,191 +678,234 @@ namespace LbbLayeredBlendBodyPartEditor
 				return false;
 			}
 
-			const FLbbLayeredBlendBodyGraphNodeModel* const* FinalSourceNodePtr = GraphContext.NodesByGuid.Find(FinalSourceGuid);
-			if (FinalSourceNodePtr == nullptr)
-			{
-				AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, FinalSourceGuid, TEXT("Final source node is missing."));
-				return false;
-			}
-
-			TMap<FGuid, int32> TempPoseIndices;
-			int32 NextTempPoseIndex = 0;
+			TMap<FGuid, FName> InternalCachePoseNames;
+			TSet<FName> UsedInternalCachePoseNames;
+			const FString InternalCacheScopeName = BuildInternalCacheScopeName(GraphContext.GraphKind, BodyPartIndex);
+			int32 NextInternalCacheIndex = 0;
 			for (const FGuid& NodeGuid : TopoAuthorNodes)
 			{
-				if (NodeGuid != FinalSourceGuid)
-				{
-					TempPoseIndices.Add(NodeGuid, NextTempPoseIndex++);
-				}
-			}
-
-			for (const FGuid& NodeGuid : TopoAuthorNodes)
-			{
-				const FLbbLayeredBlendBodyGraphNodeModel* const* NodePtr = GraphContext.NodesByGuid.Find(NodeGuid);
-				if (NodePtr == nullptr)
+				const FLbbLayeredBlendBodyGraphNodeDescriptor* Descriptor = FindDescriptor(GraphContext, NodeGuid);
+				if (Descriptor == nullptr || !Descriptor->ProducesPose() || NodeGuid == FinalSourceGuid)
 				{
 					continue;
 				}
 
-				const FLbbLayeredBlendBodyGraphNodeModel& NodeModel = **NodePtr;
+				InternalCachePoseNames.Add(
+					NodeGuid,
+					AllocateInternalCachePoseName(
+						InternalCacheScopeName,
+						NextInternalCacheIndex++,
+						ValidNamedCaches,
+						UsedInternalCachePoseNames));
+			}
+
+			const FLbbLayeredBlendBodyGraphNodeCompileContext CompileContext(
+				GraphContext.GraphKind,
+				BodyPartIndex,
+				[&GraphContext](const FGuid& NodeGuid, const FName PinName)
+				{
+					return FindInputLink(GraphContext, NodeGuid, PinName);
+				},
+				[&GraphContext, &InternalCachePoseNames, &ValidNamedCaches, &OutMessages, BodyPartIndex](const FGuid& SourceNodeGuid, FLbbLayeredBodyPartPoseSource& OutSourcePose)
+				{
+					return TryResolveCompiledSource(
+						GraphContext,
+						ELbbLayeredBlendBodyGraphKind::BodyPart,
+						InternalCachePoseNames,
+						ValidNamedCaches,
+						BodyPartIndex,
+						OutMessages,
+						SourceNodeGuid,
+						OutSourcePose);
+				});
+
+			for (const FGuid& NodeGuid : TopoAuthorNodes)
+			{
+				const FLbbLayeredBlendBodyGraphNodeModel* const* NodePtr = GraphContext.NodesByGuid.Find(NodeGuid);
+				const FLbbLayeredBlendBodyGraphNodeDescriptor* Descriptor = FindDescriptor(GraphContext, NodeGuid);
+				if (NodePtr == nullptr || Descriptor == nullptr)
+				{
+					continue;
+				}
+
+				if (!Descriptor->IsAuthorNode() || Descriptor->CompileNode == nullptr)
+				{
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, NodeGuid, TEXT("Unsupported author node type."));
+					return false;
+				}
+
+				if (!Descriptor->ProducesPose())
+				{
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, NodeGuid, TEXT("BodyPart Graph author node must produce a pose."));
+					return false;
+				}
+
 				const FLbbLayeredBodyPartPoseTarget TargetPose = (NodeGuid == FinalSourceGuid)
-					? MakeOutputTarget()
-					: MakeTemporaryTarget(TempPoseIndices.FindChecked(NodeGuid));
+					? MakeCurrentPoseTarget()
+					: MakeCachePoseTarget(InternalCachePoseNames.FindChecked(NodeGuid));
 
-				switch (NodeModel.NodeType)
+				if (!Descriptor->CompileNode(CompileContext, **NodePtr, TargetPose, OutBodyPart.Operators, OutMessages))
 				{
-				case ELbbLayeredBlendBodyGraphNodeType::ApplySlot:
-				{
-					const FLbbLayeredBlendBodyGraphLinkModel* InputLink = FindInputLink(GraphContext, NodeModel.NodeGuid, PinInput);
-					FLbbLayeredBodyPartPoseSource SourcePose;
-					if (InputLink == nullptr || !TryResolveCompiledSource(GraphContext, TempPoseIndices, InputLink->FromNodeGuid, SourcePose))
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Apply Slot failed to resolve its input."));
-						return false;
-					}
-
-					const FLbbLayeredBlendBodyGraphNodeData_ApplySlot* NodeData = NodeModel.NodeData.GetPtr<FLbbLayeredBlendBodyGraphNodeData_ApplySlot>();
-					if (NodeData == nullptr || NodeData->SlotName.IsNone())
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Apply Slot requires a valid SlotName."));
-						return false;
-					}
-
-					FLbbLayeredBlendBodyPartOperator_ApplySlot Operator;
-					Operator.SourcePose = SourcePose;
-					Operator.SlotName = NodeData->SlotName;
-					Operator.Output = TargetPose;
-					AddOperatorStruct(OutBodyPart.Operators, Operator);
-					break;
-				}
-				case ELbbLayeredBlendBodyGraphNodeType::Blend:
-				{
-					const FLbbLayeredBlendBodyGraphLinkModel* BaseLink = FindInputLink(GraphContext, NodeModel.NodeGuid, PinBase);
-					const FLbbLayeredBlendBodyGraphLinkModel* BlendLink = FindInputLink(GraphContext, NodeModel.NodeGuid, PinBlend);
-					FLbbLayeredBodyPartPoseSource BaseSource;
-					FLbbLayeredBodyPartPoseSource BlendSource;
-					if (BaseLink == nullptr || BlendLink == nullptr
-						|| !TryResolveCompiledSource(GraphContext, TempPoseIndices, BaseLink->FromNodeGuid, BaseSource)
-						|| !TryResolveCompiledSource(GraphContext, TempPoseIndices, BlendLink->FromNodeGuid, BlendSource))
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Blend failed to resolve one of its inputs."));
-						return false;
-					}
-
-					const FLbbLayeredBlendBodyGraphNodeData_Blend* NodeData = NodeModel.NodeData.GetPtr<FLbbLayeredBlendBodyGraphNodeData_Blend>();
-					if (NodeData == nullptr)
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Blend node data is missing."));
-						return false;
-					}
-
-					if (NodeData->Weight.bUseBlendCurve && NodeData->Weight.BlendCurveName.IsNone())
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Blend uses a curve weight but BlendCurveName is None."));
-						return false;
-					}
-
-					FLbbLayeredBlendBodyPartOperator_BlendTwoPoses Operator;
-					Operator.BasePose = BaseSource;
-					Operator.BlendPose = BlendSource;
-					Operator.Weight = NodeData->Weight;
-					Operator.Output = TargetPose;
-					AddOperatorStruct(OutBodyPart.Operators, Operator);
-					break;
-				}
-				case ELbbLayeredBlendBodyGraphNodeType::MaskedBlend:
-				{
-					const FLbbLayeredBlendBodyGraphLinkModel* BaseLink = FindInputLink(GraphContext, NodeModel.NodeGuid, PinBase);
-					const FLbbLayeredBlendBodyGraphLinkModel* BlendLink = FindInputLink(GraphContext, NodeModel.NodeGuid, PinBlend);
-					FLbbLayeredBodyPartPoseSource BaseSource;
-					FLbbLayeredBodyPartPoseSource BlendSource;
-					if (BaseLink == nullptr || BlendLink == nullptr
-						|| !TryResolveCompiledSource(GraphContext, TempPoseIndices, BaseLink->FromNodeGuid, BaseSource)
-						|| !TryResolveCompiledSource(GraphContext, TempPoseIndices, BlendLink->FromNodeGuid, BlendSource))
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Masked Blend failed to resolve one of its inputs."));
-						return false;
-					}
-
-					const FLbbLayeredBlendBodyGraphNodeData_MaskedBlend* NodeData = NodeModel.NodeData.GetPtr<FLbbLayeredBlendBodyGraphNodeData_MaskedBlend>();
-					if (NodeData == nullptr)
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Masked Blend node data is missing."));
-						return false;
-					}
-
-					if (NodeData->BoneFilter.BranchFilters.IsEmpty())
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Masked Blend requires a non-empty BoneFilter."));
-						return false;
-					}
-
-					if (NodeData->Weight.bUseBlendCurve && NodeData->Weight.BlendCurveName.IsNone())
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Masked Blend uses a curve weight but BlendCurveName is None."));
-						return false;
-					}
-
-					FLbbLayeredBlendBodyPartOperator_MaskedBlend Operator;
-					Operator.BasePose = BaseSource;
-					Operator.BlendPose = BlendSource;
-					Operator.BlendSpace = NodeData->BlendSpace;
-					Operator.BoneFilter = NodeData->BoneFilter;
-					Operator.Weight = NodeData->Weight;
-					Operator.Output = TargetPose;
-					AddOperatorStruct(OutBodyPart.Operators, Operator);
-					break;
-				}
-				case ELbbLayeredBlendBodyGraphNodeType::ApplyMotionDelta:
-				{
-					const FLbbLayeredBlendBodyGraphLinkModel* BaseLink = FindInputLink(GraphContext, NodeModel.NodeGuid, PinBase);
-					FLbbLayeredBodyPartPoseSource BaseSource;
-					if (BaseLink == nullptr || !TryResolveCompiledSource(GraphContext, TempPoseIndices, BaseLink->FromNodeGuid, BaseSource))
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Apply Motion Delta failed to resolve its base input."));
-						return false;
-					}
-
-					const FLbbLayeredBlendBodyGraphNodeData_ApplyMotionDelta* NodeData = NodeModel.NodeData.GetPtr<FLbbLayeredBlendBodyGraphNodeData_ApplyMotionDelta>();
-					if (NodeData == nullptr)
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Apply Motion Delta node data is missing."));
-						return false;
-					}
-
-					if (NodeData->Weight.bUseBlendCurve && NodeData->Weight.BlendCurveName.IsNone())
-					{
-						AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Apply Motion Delta uses a curve weight but BlendCurveName is None."));
-						return false;
-					}
-
-					FLbbLayeredBlendBodyPartOperator_ApplyAdditive Operator;
-					Operator.BasePose = BaseSource;
-					Operator.AdditiveSpace = NodeData->AdditiveSpace;
-					Operator.Weight = NodeData->Weight;
-					Operator.Output = TargetPose;
-					AddOperatorStruct(OutBodyPart.Operators, Operator);
-					break;
-				}
-				default:
-					AddMessage(OutMessages, EMessageSeverity::Error, BodyPartIndex, NodeModel.NodeGuid, TEXT("Unsupported author node type."));
 					return false;
 				}
 			}
 
-			const FLbbLayeredBlendBodyGraphNodeModel& FinalSourceNode = **FinalSourceNodePtr;
-			if (!IsAuthorNodeType(FinalSourceNode.NodeType))
+			const FLbbLayeredBlendBodyGraphNodeDescriptor* FinalDescriptor = FindDescriptor(GraphContext, FinalSourceGuid);
+			if (FinalDescriptor == nullptr)
 			{
-				if (FinalSourceNode.NodeType != ELbbLayeredBlendBodyGraphNodeType::CurrentPose)
+				AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, BodyPartIndex, FinalSourceGuid, TEXT("Final source node descriptor is missing."));
+				return false;
+			}
+
+			if (FinalDescriptor->bIsInputNode)
+			{
+				FLbbLayeredBodyPartPoseSource FinalSourcePose;
+				if (!TryResolveCompiledSource(
+						GraphContext,
+						GraphContext.GraphKind,
+						InternalCachePoseNames,
+						ValidNamedCaches,
+						BodyPartIndex,
+						OutMessages,
+						FinalSourceGuid,
+						FinalSourcePose))
+				{
+					return false;
+				}
+
+				if (FinalSourcePose.Type != ELbbLayeredBodyPartPoseSourceType::CurrentPose)
 				{
 					FLbbLayeredBlendBodyPartOperator_CopyPose Operator;
-					Operator.SourcePose = MakeSourceFromFixedNodeType(FinalSourceNode.NodeType);
-					Operator.Output = MakeOutputTarget();
-					AddOperatorStruct(OutBodyPart.Operators, Operator);
+					Operator.SourcePose = FinalSourcePose;
+					Operator.Output = MakeCurrentPoseTarget();
+					FInstancedStruct& OperatorData = OutBodyPart.Operators.AddDefaulted_GetRef();
+					OperatorData.InitializeAs<FLbbLayeredBlendBodyPartOperator_CopyPose>();
+					OperatorData.GetMutable<FLbbLayeredBlendBodyPartOperator_CopyPose>() = Operator;
 				}
 			}
 
-			return true;
+			return !HasErrors(OutMessages);
 		}
+
+		static bool CompileCacheGraph(
+			const FLbbLayeredBlendBodyCacheGraphModel& GraphModel,
+			FCompiledCacheGraph& OutCacheGraph,
+			TArray<FLbbCompileMessage>& OutMessages)
+		{
+			FGraphContext GraphContext(GraphModel, ELbbLayeredBlendBodyGraphKind::Cache);
+			BuildGraphContext(GraphModel, GraphContext.GraphKind, INDEX_NONE, OutMessages, GraphContext);
+			if (HasErrors(OutMessages))
+			{
+				return false;
+			}
+
+			CollectNamedCaches(GraphContext, INDEX_NONE, OutCacheGraph, OutMessages);
+			if (HasErrors(OutMessages))
+			{
+				return false;
+			}
+
+			TSet<FName> ValidNamedCaches;
+			for (const FName CacheName : OutCacheGraph.NamedCacheNames)
+			{
+				ValidNamedCaches.Add(CacheName);
+			}
+			TSet<FGuid> ReachableNodes;
+			TArray<FGuid> TopoAuthorNodes;
+			FGuid UnusedFinalSourceGuid;
+			BuildReachableGraph(GraphContext, INDEX_NONE, ReachableNodes, TopoAuthorNodes, UnusedFinalSourceGuid, OutMessages);
+			if (HasErrors(OutMessages))
+			{
+				return false;
+			}
+
+			TMap<FGuid, FName> InternalCachePoseNames;
+			TSet<FName> UsedInternalCachePoseNames;
+			const FString InternalCacheScopeName = BuildInternalCacheScopeName(GraphContext.GraphKind, INDEX_NONE);
+			int32 NextInternalCacheIndex = 0;
+			for (const FGuid& NodeGuid : TopoAuthorNodes)
+			{
+				const FLbbLayeredBlendBodyGraphNodeDescriptor* Descriptor = FindDescriptor(GraphContext, NodeGuid);
+				if (Descriptor == nullptr || !Descriptor->ProducesPose())
+				{
+					continue;
+				}
+
+				InternalCachePoseNames.Add(
+					NodeGuid,
+					AllocateInternalCachePoseName(
+						InternalCacheScopeName,
+						NextInternalCacheIndex++,
+						ValidNamedCaches,
+						UsedInternalCachePoseNames));
+			}
+
+			const FLbbLayeredBlendBodyGraphNodeCompileContext CompileContext(
+				GraphContext.GraphKind,
+				INDEX_NONE,
+				[&GraphContext](const FGuid& NodeGuid, const FName PinName)
+				{
+					return FindInputLink(GraphContext, NodeGuid, PinName);
+				},
+				[&GraphContext, &InternalCachePoseNames, &ValidNamedCaches, &OutMessages](const FGuid& SourceNodeGuid, FLbbLayeredBodyPartPoseSource& OutSourcePose)
+				{
+					return TryResolveCompiledSource(
+						GraphContext,
+						ELbbLayeredBlendBodyGraphKind::Cache,
+						InternalCachePoseNames,
+						ValidNamedCaches,
+						INDEX_NONE,
+						OutMessages,
+						SourceNodeGuid,
+						OutSourcePose);
+				});
+
+			for (const FGuid& NodeGuid : TopoAuthorNodes)
+			{
+				const FLbbLayeredBlendBodyGraphNodeModel* const* NodePtr = GraphContext.NodesByGuid.Find(NodeGuid);
+				const FLbbLayeredBlendBodyGraphNodeDescriptor* Descriptor = FindDescriptor(GraphContext, NodeGuid);
+				if (NodePtr == nullptr || Descriptor == nullptr)
+				{
+					continue;
+				}
+
+				if (!Descriptor->IsAuthorNode() || Descriptor->CompileNode == nullptr)
+				{
+					AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, INDEX_NONE, NodeGuid, TEXT("Unsupported author node type."));
+					return false;
+				}
+
+				FLbbLayeredBodyPartPoseTarget TargetPose;
+				if (Descriptor->bIsSavePoseNode)
+				{
+					const FLbbLayeredBlendBodyGraphNodeData_SavePose* NodeData = (*NodePtr)->NodeData.GetPtr<FLbbLayeredBlendBodyGraphNodeData_SavePose>();
+					if (NodeData == nullptr)
+					{
+						AddMessage(OutMessages, EMessageSeverity::Error, GraphContext.GraphKind, INDEX_NONE, NodeGuid, TEXT("Save Pose node data is missing."));
+						return false;
+					}
+
+					TargetPose = MakeCachePoseTarget(NodeData->CachePoseName);
+				}
+				else
+				{
+					TargetPose = MakeCachePoseTarget(InternalCachePoseNames.FindChecked(NodeGuid));
+				}
+
+				if (!Descriptor->CompileNode(CompileContext, **NodePtr, TargetPose, OutCacheGraph.Operators, OutMessages))
+				{
+					return false;
+				}
+			}
+
+			return !HasErrors(OutMessages);
+		}
+	}
+
+	void FLbbLayeredBlendBodyGraphCompiler::CreateDefaultCacheGraph(FLbbLayeredBlendBodyCacheGraphModel& OutGraphModel)
+	{
+		OutGraphModel = FLbbLayeredBlendBodyCacheGraphModel();
+		OutGraphModel.GraphGuid = FGuid::NewGuid();
 	}
 
 	void FLbbLayeredBlendBodyGraphCompiler::CreateDefaultBodyPartGraph(
@@ -730,32 +916,51 @@ namespace LbbLayeredBlendBodyPartEditor
 		OutGraphModel.GraphGuid = FGuid::NewGuid();
 		OutGraphModel.PartName = PartName;
 
-		const FGuid CurrentPoseGuid = AddNode(OutGraphModel, ELbbLayeredBlendBodyGraphNodeType::CurrentPose, FVector2D(0.f, 0.f));
-		AddNode(OutGraphModel, ELbbLayeredBlendBodyGraphNodeType::Motion, FVector2D(0.f, 180.f));
-		AddNode(OutGraphModel, ELbbLayeredBlendBodyGraphNodeType::BasePose, FVector2D(0.f, 360.f));
-		AddNode(OutGraphModel, ELbbLayeredBlendBodyGraphNodeType::OverlayPose, FVector2D(0.f, 540.f));
-		const FGuid ResultGuid = AddNode(OutGraphModel, ELbbLayeredBlendBodyGraphNodeType::Result, FVector2D(920.f, 180.f));
+		const FGuid InputGuid = AddNode<FLbbLayeredBlendBodyGraphNodeData_Input>(
+			OutGraphModel,
+			FVector2D(0.f, 120.f),
+			[](FLbbLayeredBlendBodyGraphNodeData_Input& NodeData)
+			{
+				NodeData.SourcePose.Type = ELbbLayeredBodyPartPoseSourceType::CurrentPose;
+			});
+		const FGuid ResultGuid = AddNode<FLbbLayeredBlendBodyGraphNodeData_Result>(
+			OutGraphModel,
+			FVector2D(520.f, 120.f),
+			[](FLbbLayeredBlendBodyGraphNodeData_Result&)
+			{
+			});
 
-		AddLink(OutGraphModel, CurrentPoseGuid, PinPose, ResultGuid, PinPose);
+		AddLink(OutGraphModel, InputGuid, PinPose, ResultGuid, PinPose);
 	}
 
-	FCompileResult FLbbLayeredBlendBodyGraphCompiler::Compile(ULbbLayeredBlendBodyDefinition& Definition)
+FLbbCompileResult FLbbLayeredBlendBodyGraphCompiler::Compile(ULbbLayeredBlendBodyDefinition& Definition)
 	{
-		FCompileResult Result;
+		FLbbCompileResult Result;
 		Result.bSuccess = false;
 
 #if !WITH_EDITORONLY_DATA
 		Result.bSuccess = true;
 		return Result;
 #else
+		FCompiledCacheGraph CompiledCacheGraph;
+		CompileCacheGraph(Definition.EditorModel.CacheGraph, CompiledCacheGraph, Result.Messages);
+
+		TSet<FName> ValidNamedCaches;
+		for (const FName CacheName : CompiledCacheGraph.NamedCacheNames)
+		{
+			ValidNamedCaches.Add(CacheName);
+		}
 		TArray<FLbbLayeredBlendBodyPart> CompiledBodyParts;
 		CompiledBodyParts.Reserve(Definition.EditorModel.BodyPartGraphs.Num());
 
-		for (int32 BodyPartIndex = 0; BodyPartIndex < Definition.EditorModel.BodyPartGraphs.Num(); ++BodyPartIndex)
+		if (!HasErrors(Result.Messages))
 		{
-			const FLbbLayeredBlendBodyPartGraphModel& GraphModel = Definition.EditorModel.BodyPartGraphs[BodyPartIndex];
-			FLbbLayeredBlendBodyPart& CompiledBodyPart = CompiledBodyParts.AddDefaulted_GetRef();
-			CompileBodyPartGraph(GraphModel, BodyPartIndex, CompiledBodyPart, Result.Messages);
+			for (int32 BodyPartIndex = 0; BodyPartIndex < Definition.EditorModel.BodyPartGraphs.Num(); ++BodyPartIndex)
+			{
+				const FLbbLayeredBlendBodyPartGraphModel& GraphModel = Definition.EditorModel.BodyPartGraphs[BodyPartIndex];
+				FLbbLayeredBlendBodyPart& CompiledBodyPart = CompiledBodyParts.AddDefaulted_GetRef();
+				CompileBodyPartGraph(GraphModel, BodyPartIndex, ValidNamedCaches, CompiledBodyPart, Result.Messages);
+			}
 		}
 
 		TMap<FName, int32> PartNameCounts;
@@ -776,6 +981,7 @@ namespace LbbLayeredBlendBodyPartEditor
 				AddMessage(
 					Result.Messages,
 					EMessageSeverity::Warning,
+					ELbbLayeredBlendBodyGraphKind::BodyPart,
 					BodyPartIndex,
 					FGuid(),
 					FString::Printf(TEXT("BodyPart name '%s' is duplicated."), *PartName.ToString()));
@@ -786,10 +992,11 @@ namespace LbbLayeredBlendBodyPartEditor
 
 		if (Result.bSuccess)
 		{
+			Definition.CacheProgram.NamedCacheNames = MoveTemp(CompiledCacheGraph.NamedCacheNames);
+			Definition.CacheProgram.Operators = MoveTemp(CompiledCacheGraph.Operators);
 			Definition.BodyParts = MoveTemp(CompiledBodyParts);
 		}
 
 		return Result;
 #endif
 	}
-}

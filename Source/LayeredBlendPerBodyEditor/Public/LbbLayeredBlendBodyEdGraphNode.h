@@ -5,8 +5,10 @@
 #include "CoreMinimal.h"
 #include "EdGraph/EdGraphNode.h"
 #include "LbbLayeredBlendBodyEditorModel.h"
-#include "LbbLayeredBlendBodyDefinition.h"
 #include "LbbLayeredBlendBodyEdGraphNode.generated.h"
+
+class FProperty;
+struct FPropertyChangedEvent;
 
 UCLASS(Abstract)
 class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraphNode : public UEdGraphNode
@@ -16,7 +18,7 @@ class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraphNode : public UEd
 public:
 	static const FName PosePinCategory;
 
-	virtual ELbbLayeredBlendBodyGraphNodeType GetGraphNodeType() const PURE_VIRTUAL(ULbbLayeredBlendBodyEdGraphNode::GetGraphNodeType, return ELbbLayeredBlendBodyGraphNodeType::CurrentPose;);
+	virtual const UScriptStruct* GetNodeDataStruct() const PURE_VIRTUAL(ULbbLayeredBlendBodyEdGraphNode::GetNodeDataStruct, return nullptr;);
 	virtual bool IsFixedNode() const { return false; }
 
 	virtual void AllocateDefaultPins() override;
@@ -39,24 +41,45 @@ protected:
 
 	UEdGraphPin* CreatePoseInputPin(const FName& PinName) const;
 	UEdGraphPin* CreatePoseOutputPin(const FName& PinName) const;
+
+	const class ULbbLayeredBlendBodyEdGraph* GetOwningLayeredBlendGraph() const;
+	const class ULbbLayeredBlendBodyDefinition* GetOwningDefinition() const;
 };
 
 UCLASS()
-class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraphNode_FixedPose : public ULbbLayeredBlendBodyEdGraphNode
+class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraphNode_Input : public ULbbLayeredBlendBodyEdGraphNode
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY()
-	ELbbLayeredBlendBodyGraphNodeType FixedNodeType = ELbbLayeredBlendBodyGraphNodeType::CurrentPose;
+	UPROPERTY(EditAnywhere, Category = "Node")
+	ELbbLayeredBodyPartPoseSourceType SourceType = ELbbLayeredBodyPartPoseSourceType::CurrentPose;
 
-	virtual ELbbLayeredBlendBodyGraphNodeType GetGraphNodeType() const override { return FixedNodeType; }
-	virtual bool IsFixedNode() const override { return true; }
+	UPROPERTY(EditAnywhere, Category = "Node", meta = (EditCondition = "SourceType == ELbbLayeredBodyPartPoseSourceType::CachePose", EditConditionHides, GetOptions = "GetAvailableCachePoseOptions"))
+	FName CachePoseName = NAME_None;
+
+	UFUNCTION()
+	TArray<FString> GetAvailableCachePoseOptions() const;
+
+	virtual const UScriptStruct* GetNodeDataStruct() const override { return FLbbLayeredBlendBodyGraphNodeData_Input::StaticStruct(); }
 
 protected:
 	virtual void AllocatePosePins() override;
 	virtual FText GetNodeTitleText() const override;
 	virtual FLinearColor GetNodeColor() const override;
+	virtual void ImportNodeData(const FInstancedStruct& NodeData) override;
+	virtual void ExportNodeData(FInstancedStruct& OutNodeData) const override;
+#if WITH_EDITOR
+	virtual bool CanEditChange(const FProperty* InProperty) const override;
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
+private:
+	FLbbLayeredBodyPartPoseSource GetSourcePose() const;
+	void SetSourcePose(const FLbbLayeredBodyPartPoseSource& InSourcePose);
+	void SanitizeSourceSelection();
+	bool IsSourceTypeAllowedInCurrentGraph(ELbbLayeredBodyPartPoseSourceType InSourceType) const;
+	bool IsAvailableNamedCache(FName InCachePoseName) const;
 };
 
 UCLASS()
@@ -65,7 +88,7 @@ class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraphNode_Result : pub
 	GENERATED_BODY()
 
 public:
-	virtual ELbbLayeredBlendBodyGraphNodeType GetGraphNodeType() const override { return ELbbLayeredBlendBodyGraphNodeType::Result; }
+	virtual const UScriptStruct* GetNodeDataStruct() const override { return FLbbLayeredBlendBodyGraphNodeData_Result::StaticStruct(); }
 	virtual bool IsFixedNode() const override { return true; }
 
 protected:
@@ -83,7 +106,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Node")
 	FName SlotName = NAME_None;
 
-	virtual ELbbLayeredBlendBodyGraphNodeType GetGraphNodeType() const override { return ELbbLayeredBlendBodyGraphNodeType::ApplySlot; }
+	virtual const UScriptStruct* GetNodeDataStruct() const override { return FLbbLayeredBlendBodyGraphNodeData_ApplySlot::StaticStruct(); }
 
 protected:
 	virtual void AllocatePosePins() override;
@@ -102,7 +125,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Node")
 	FLbbBlendWeight Weight;
 
-	virtual ELbbLayeredBlendBodyGraphNodeType GetGraphNodeType() const override { return ELbbLayeredBlendBodyGraphNodeType::Blend; }
+	virtual const UScriptStruct* GetNodeDataStruct() const override { return FLbbLayeredBlendBodyGraphNodeData_Blend::StaticStruct(); }
 
 protected:
 	virtual void AllocatePosePins() override;
@@ -127,7 +150,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Node")
 	FLbbBlendWeight Weight;
 
-	virtual ELbbLayeredBlendBodyGraphNodeType GetGraphNodeType() const override { return ELbbLayeredBlendBodyGraphNodeType::MaskedBlend; }
+	virtual const UScriptStruct* GetNodeDataStruct() const override { return FLbbLayeredBlendBodyGraphNodeData_MaskedBlend::StaticStruct(); }
 
 protected:
 	virtual void AllocatePosePins() override;
@@ -138,7 +161,45 @@ protected:
 };
 
 UCLASS()
-class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraphNode_ApplyMotionDelta : public ULbbLayeredBlendBodyEdGraphNode
+class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraphNode_SavePose : public ULbbLayeredBlendBodyEdGraphNode
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditAnywhere, Category = "Node")
+	FName CachePoseName = NAME_None;
+
+	virtual const UScriptStruct* GetNodeDataStruct() const override { return FLbbLayeredBlendBodyGraphNodeData_SavePose::StaticStruct(); }
+
+protected:
+	virtual void AllocatePosePins() override;
+	virtual FText GetNodeTitleText() const override;
+	virtual FLinearColor GetNodeColor() const override;
+	virtual void ImportNodeData(const FInstancedStruct& NodeData) override;
+	virtual void ExportNodeData(FInstancedStruct& OutNodeData) const override;
+};
+
+UCLASS()
+class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraphNode_MakeAdditive : public ULbbLayeredBlendBodyEdGraphNode
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditAnywhere, Category = "Node")
+	ELbbBoneSpace AdditiveSpace = ELbbBoneSpace::LocalSpace;
+
+	virtual const UScriptStruct* GetNodeDataStruct() const override { return FLbbLayeredBlendBodyGraphNodeData_MakeAdditive::StaticStruct(); }
+
+protected:
+	virtual void AllocatePosePins() override;
+	virtual FText GetNodeTitleText() const override;
+	virtual FLinearColor GetNodeColor() const override;
+	virtual void ImportNodeData(const FInstancedStruct& NodeData) override;
+	virtual void ExportNodeData(FInstancedStruct& OutNodeData) const override;
+};
+
+UCLASS()
+class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraphNode_ApplyAdditive : public ULbbLayeredBlendBodyEdGraphNode
 {
 	GENERATED_BODY()
 
@@ -149,7 +210,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Node")
 	FLbbBlendWeight Weight;
 
-	virtual ELbbLayeredBlendBodyGraphNodeType GetGraphNodeType() const override { return ELbbLayeredBlendBodyGraphNodeType::ApplyMotionDelta; }
+	virtual const UScriptStruct* GetNodeDataStruct() const override { return FLbbLayeredBlendBodyGraphNodeData_ApplyAdditive::StaticStruct(); }
 
 protected:
 	virtual void AllocatePosePins() override;

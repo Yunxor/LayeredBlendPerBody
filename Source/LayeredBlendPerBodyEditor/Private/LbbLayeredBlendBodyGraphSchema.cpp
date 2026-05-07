@@ -2,14 +2,16 @@
 
 #include "LbbLayeredBlendBodyGraphSchema.h"
 
+#include "LbbLayeredBlendBodyEdGraph.h"
 #include "LbbLayeredBlendBodyEdGraphNode.h"
+#include "LbbLayeredBlendBodyGraphNodeRegistry.h"
 #include "ScopedTransaction.h"
 
 #define LOCTEXT_NAMESPACE "LbbLayeredBlendBodyGraphSchema"
 
 const FName ULbbLayeredBlendBodyGraphSchema::PC_Pose(TEXT("Pose"));
 
-namespace LbbLayeredBlendBodyPartEditor
+namespace
 {
 	static bool CanReachNodeByFollowingOutputs(
 		const UEdGraphNode* const StartNode,
@@ -113,27 +115,23 @@ namespace LbbLayeredBlendBodyPartEditor
 
 void ULbbLayeredBlendBodyGraphSchema::GetGraphContextActions(FGraphContextMenuBuilder& ContextMenuBuilder) const
 {
-	using namespace LbbLayeredBlendBodyPartEditor;
+	const ULbbLayeredBlendBodyEdGraph* Graph = Cast<ULbbLayeredBlendBodyEdGraph>(ContextMenuBuilder.CurrentGraph);
+	const ELbbLayeredBlendBodyGraphKind GraphKind = Graph != nullptr
+		? Graph->GraphKind
+		: ELbbLayeredBlendBodyGraphKind::BodyPart;
 
-	ContextMenuBuilder.AddAction(MakeShared<FGraphSchemaAction_NewNode>(
-		LOCTEXT("NodeCategory", "Operators"),
-		LOCTEXT("AddApplySlotNode", "Apply Slot"),
-		ULbbLayeredBlendBodyEdGraphNode_ApplySlot::StaticClass()));
+	for (const FLbbLayeredBlendBodyGraphNodeDescriptor& Descriptor : GetLbbLayeredBlendBodyGraphNodeDescriptors())
+	{
+		if (!Descriptor.bShowInNodeMenu || Descriptor.NodeClass == nullptr || !Descriptor.IsAllowedInGraph(GraphKind))
+		{
+			continue;
+		}
 
-	ContextMenuBuilder.AddAction(MakeShared<FGraphSchemaAction_NewNode>(
-		LOCTEXT("NodeCategory", "Operators"),
-		LOCTEXT("AddBlendNode", "Blend"),
-		ULbbLayeredBlendBodyEdGraphNode_Blend::StaticClass()));
-
-	ContextMenuBuilder.AddAction(MakeShared<FGraphSchemaAction_NewNode>(
-		LOCTEXT("NodeCategory", "Operators"),
-		LOCTEXT("AddMaskedBlendNode", "Masked Blend"),
-		ULbbLayeredBlendBodyEdGraphNode_MaskedBlend::StaticClass()));
-
-	ContextMenuBuilder.AddAction(MakeShared<FGraphSchemaAction_NewNode>(
-		LOCTEXT("NodeCategory", "Operators"),
-		LOCTEXT("AddApplyMotionDeltaNode", "Apply Motion Delta"),
-		ULbbLayeredBlendBodyEdGraphNode_ApplyMotionDelta::StaticClass()));
+		ContextMenuBuilder.AddAction(MakeShared<FGraphSchemaAction_NewNode>(
+			LOCTEXT("NodeCategory", "Nodes"),
+			FText::FromString(Descriptor.DisplayName),
+			Descriptor.NodeClass));
+	}
 }
 
 const FPinConnectionResponse ULbbLayeredBlendBodyGraphSchema::CanCreateConnection(const UEdGraphPin* A, const UEdGraphPin* B) const
@@ -165,7 +163,7 @@ const FPinConnectionResponse ULbbLayeredBlendBodyGraphSchema::CanCreateConnectio
 
 	const UEdGraphPin* InputPin = (A->Direction == EGPD_Input) ? A : B;
 	const UEdGraphPin* OutputPin = (A->Direction == EGPD_Output) ? A : B;
-	if (LbbLayeredBlendBodyPartEditor::WouldCreateCycle(OutputPin, InputPin))
+	if (WouldCreateCycle(OutputPin, InputPin))
 	{
 		return FPinConnectionResponse(CONNECT_RESPONSE_DISALLOW, LOCTEXT("CycleConnection", "This connection would create a cycle."));
 	}

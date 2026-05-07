@@ -48,6 +48,7 @@ private:
 	struct FCompileMessageListItem
 	{
 		EMessageSeverity::Type Severity = EMessageSeverity::Info;
+		ELbbLayeredBlendBodyGraphKind GraphKind = ELbbLayeredBlendBodyGraphKind::BodyPart;
 		int32 BodyPartIndex = INDEX_NONE;
 		FGuid NodeGuid;
 		FText DisplayText;
@@ -62,13 +63,14 @@ private:
 	static const FName CompileMessagesTabId;
 	static const FName EditorAppName;
 
-	void ApplyCompileMessagesToCurrentGraph(const LbbLayeredBlendBodyPartEditor::FCompileResult& CompileResult);
+	void ApplyCompileMessagesToCurrentGraph(const FLbbCompileResult& CompileResult);
 	void ClearCurrentGraphChangedHandler();
 	void ExtendToolbar();
 	void FillToolbar(class FToolBarBuilder& ToolbarBuilder);
 	void BindBodyPartCommands();
-	void RefreshBodyPartCompileSummaries(const LbbLayeredBlendBodyPartEditor::FCompileResult& CompileResult);
+	void RefreshBodyPartCompileSummaries(const FLbbCompileResult& CompileResult);
 	void RefreshBodyPartItems();
+	void SelectCacheGraph(bool bForceRebuild = false);
 	void SelectBodyPart(int32 BodyPartIndex, bool bForceRebuild = false);
 	void RebuildCurrentGraph();
 	void RebuildGraphWidget();
@@ -77,7 +79,7 @@ private:
 	void SyncBodyPartDetailsToModel();
 	void RefreshBodyPartDetailsObject();
 	bool CompileDefinition(bool bMarkDirty, bool bForceRefreshMessages = true);
-	void RefreshCompileMessages(const LbbLayeredBlendBodyPartEditor::FCompileResult& CompileResult);
+	void RefreshCompileMessages(const FLbbCompileResult& CompileResult);
 	void RefreshCompiledOperatorsPreview();
 	FString BuildCompiledOperatorsPreviewText() const;
 	void NavigateToCompileMessage(const FCompileMessageListItem& Item);
@@ -98,6 +100,7 @@ private:
 	bool CanDeleteBodyPart() const;
 	bool CanMoveBodyPartUp() const;
 	bool CanMoveBodyPartDown() const;
+	bool IsCacheGraphSelected() const { return CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::Cache; }
 
 	TSharedRef<class SDockTab> SpawnBodyPartListTab(const class FSpawnTabArgs& Args);
 	TSharedRef<class SDockTab> SpawnGraphTab(const class FSpawnTabArgs& Args);
@@ -127,9 +130,11 @@ private:
 	TSharedPtr<SBorder> GraphHostBorder;
 	TSharedPtr<class FExtender> ToolbarExtender;
 	TArray<TSharedPtr<int32>> BodyPartItems;
+	FBodyPartCompileSummary CacheGraphCompileSummary;
 	TArray<FBodyPartCompileSummary> BodyPartCompileSummaries;
 	TArray<TSharedPtr<FCompileMessageListItem>> CompileMessageItems;
 	FDelegateHandle CurrentGraphChangedHandle;
+	ELbbLayeredBlendBodyGraphKind CurrentGraphKind = ELbbLayeredBlendBodyGraphKind::Cache;
 	int32 CurrentBodyPartIndex = INDEX_NONE;
 	bool bIsSynchronizing = false;
 };

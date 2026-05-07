@@ -1,131 +1,168 @@
 
 #include "LbbLayeredBlendBodyExecutionContext.h"
-#include "LbbLayeredBlendBodyDefinition.h"
+#include "LbbLayeredBlendBodyOperators.h"
 #include "Animation/AnimInstanceProxy.h"
 
-namespace LbbLayeredBlendBodyPart
+namespace
 {
-	FOperatorExecutionContext::FOperatorExecutionContext(
-		const TArray<FSlotNodeData>& InSlotNodesData,
-		FPoseContext& InOutputPose,
-		const FBodyPartExecutionInputs& InInputs,
-		const int32 NumTemporaryPoses)
-		: SlotNodesData(InSlotNodesData)
-		, OutputPose(InOutputPose)
-		, Inputs(InInputs)
+	inline static void ConvertToAdditivePose(FPoseContext& InOutAdditive, const FPoseContext& BasePose, const bool bIsMeshSpace)
 	{
-		TemporaryPoses.SetNum(NumTemporaryPoses);
-	}
-
-	const FPoseContext& FOperatorExecutionContext::ResolveSource(const FOperatorExecutionContext& Context, const FCompiledPoseSource& Source)
-	{
-		switch (Source.Type)
+		if (bIsMeshSpace)
 		{
-		case ELbbLayeredBodyPartPoseSourceType::Motion:
-			return Context.Inputs.MotionPose;
-		case ELbbLayeredBodyPartPoseSourceType::BasePose:
-			check(Context.Inputs.BasePose != nullptr);
-			return *Context.Inputs.BasePose;
-		case ELbbLayeredBodyPartPoseSourceType::OverlayPose:
-			check(Context.Inputs.OverlayPose != nullptr);
-			return *Context.Inputs.OverlayPose;
-		case ELbbLayeredBodyPartPoseSourceType::OutputPose:
-			return Context.OutputPose;
-		case ELbbLayeredBodyPartPoseSourceType::TemporaryPose:
-			check(Context.TemporaryPoses.IsValidIndex(Source.TemporaryPoseIndex));
-			check(Context.TemporaryPoses[Source.TemporaryPoseIndex].IsSet());
-			return Context.TemporaryPoses[Source.TemporaryPoseIndex].GetValue();
-		default:
-			return Context.OutputPose;
-		}
-	}
-
-	FPoseContext& FOperatorExecutionContext::ResolveTarget(FOperatorExecutionContext& Context, const FCompiledPoseTarget& Target)
-	{
-		if (Target.Type == ELbbLayeredBodyPartPoseTargetType::OutputPose)
-		{
-			return Context.OutputPose;
+			FCompactPose BasePoseMeshSpace = BasePose.Pose;
+			FAnimationRuntime::ConvertPoseToMeshRotation(BasePoseMeshSpace);
+			FAnimationRuntime::ConvertPoseToMeshRotation(InOutAdditive.Pose);
+			FAnimationRuntime::ConvertPoseToAdditive(InOutAdditive.Pose, BasePoseMeshSpace);
+			return;
 		}
 
-		check(Context.TemporaryPoses.IsValidIndex(Target.TemporaryPoseIndex));
-		if (!Context.TemporaryPoses[Target.TemporaryPoseIndex].IsSet())
-		{
-			Context.TemporaryPoses[Target.TemporaryPoseIndex].Emplace(Context.OutputPose);
-		}
-
-		return Context.TemporaryPoses[Target.TemporaryPoseIndex].GetValue();
+		FAnimationRuntime::ConvertPoseToAdditive(InOutAdditive.Pose, BasePose.Pose);
 	}
 
-	void FOperatorExecutionContext::AssignTarget(FOperatorExecutionContext& Context, const FCompiledPoseTarget& Target, const FPoseContext& Source)
-	{
-		FPoseContext& TargetPose = ResolveTarget(Context, Target);
-		TargetPose = Source;
-	}
-
-	bool FOperatorExecutionContext::CanEvaluateSlot(const FOperatorExecutionContext& Context, const int32 SlotNodeIndex)
-	{
-		if (!Context.SlotNodesData.IsValidIndex(SlotNodeIndex))
-		{
-			return false;
-		}
-
-		const FSlotNodeData& SlotNodeData = Context.SlotNodesData[SlotNodeIndex];
-		return SlotNodeData.HasSlotNodeBlending();
-	}
-
-	void FOperatorExecutionContext::EvaluateSlot(const FOperatorExecutionContext& Context, const int32 SlotNodeIndex, const FPoseContext& SourcePose, FPoseContext& TargetPose)
-	{
-		check(Context.SlotNodesData.IsValidIndex(SlotNodeIndex));
-
-		const FSlotNodeData& SlotNodeData = Context.SlotNodesData[SlotNodeIndex];
-
-		FPoseContext SourcePoseCopy(Context.OutputPose);
-		SourcePoseCopy = SourcePose;
-
-		const FAnimationPoseData SourcePoseData(SourcePoseCopy);
-		FAnimationPoseData OutputPoseData(TargetPose);
-		Context.OutputPose.AnimInstanceProxy->SlotEvaluatePose(
-			SlotNodeData.SlotNodeName,
-			SourcePoseData,
-			SlotNodeData.SourceWeight,
-			OutputPoseData,
-			SlotNodeData.SlotNodeWeight,
-			SlotNodeData.TotalNodeWeight);
-	}
-
-	inline static void AccumulateAdditivePose(FPoseContext& InOut, const FCompactPose& AdditivePose, const bool bIsMeshSpace, const float Weight)
+	inline static void AccumulateAdditivePose(
+		FPoseContext& InOut,
+		const FPoseContext& AdditivePose,
+		const bool bIsMeshSpace,
+		const float Weight)
 	{
 		FAnimationPoseData OutputPoseData(InOut);
-		const FAnimationPoseData AdditivePoseData = {const_cast<FCompactPose&>(AdditivePose), const_cast<FBlendedCurve&>(InOut.Curve), InOut.CustomAttributes};
+		FCompactPose& MutableAdditivePose = const_cast<FCompactPose&>(AdditivePose.Pose);
+		FBlendedCurve& MutableAdditiveCurve = const_cast<FBlendedCurve&>(AdditivePose.Curve);
+		UE::Anim::FStackAttributeContainer& MutableAdditiveAttributes = const_cast<UE::Anim::FStackAttributeContainer&>(AdditivePose.CustomAttributes);
+		const FAnimationPoseData AdditivePoseData(MutableAdditivePose, MutableAdditiveCurve, MutableAdditiveAttributes);
 
-		FAnimationRuntime::AccumulateAdditivePose(OutputPoseData, AdditivePoseData, Weight, (bIsMeshSpace ? AAT_RotationOffsetMeshSpace : AAT_LocalSpaceBase));
+		FAnimationRuntime::AccumulateAdditivePose(
+			OutputPoseData,
+			AdditivePoseData,
+			Weight,
+			(bIsMeshSpace ? AAT_RotationOffsetMeshSpace : AAT_LocalSpaceBase));
 	}
-	
-	void FOperatorExecutionContext::AccumulateAdditive(const FOperatorExecutionContext& Context, FPoseContext& TargetPose, const bool bMeshSpace, const float BlendWeight)
+}
+
+FLbbOperatorExecutionContext::FLbbOperatorExecutionContext(
+	const TArray<FLbbSlotNodeData>& InSlotNodesData,
+	FPoseContext& InCurrentPose,
+	const FLbbOperatorExecutionInputs& InInputs)
+	: SlotNodesData(InSlotNodesData)
+	, CurrentPose(InCurrentPose)
+	, Inputs(InInputs)
+{
+}
+
+const FPoseContext& FLbbOperatorExecutionContext::ResolveSource(const FLbbOperatorExecutionContext& Context, const FLbbCompiledPoseSource& Source)
+{
+	switch (Source.Kind)
 	{
-		if (FAnimWeight::IsRelevant(BlendWeight))
-		{
-			AccumulateAdditivePose(TargetPose, ResolveAdditivePose(Context, bMeshSpace), bMeshSpace, BlendWeight);
-		}
+	case ELbbCompiledPoseSourceKind::Motion:
+		return Context.Inputs.MotionPose;
+	case ELbbCompiledPoseSourceKind::BasePose:
+		check(Context.Inputs.BasePose != nullptr);
+		return *Context.Inputs.BasePose;
+	case ELbbCompiledPoseSourceKind::OverlayPose:
+		check(Context.Inputs.OverlayPose != nullptr);
+		return *Context.Inputs.OverlayPose;
+	case ELbbCompiledPoseSourceKind::CurrentPose:
+		return Context.CurrentPose;
+	case ELbbCompiledPoseSourceKind::CacheSlot:
+		check(Context.Inputs.CacheSlots != nullptr);
+		check(Context.Inputs.CacheSlots->IsValidIndex(Source.PoseIndex));
+		check((*Context.Inputs.CacheSlots)[Source.PoseIndex].IsSet());
+		return (*Context.Inputs.CacheSlots)[Source.PoseIndex].GetValue();
+	default:
+		return Context.CurrentPose;
 	}
+}
 
-	void FOperatorExecutionContext::BlendTwoPoses(const FOperatorExecutionContext& Context, const FPoseContext& BasePose, const FPoseContext& BlendPose, FPoseContext& TargetPose, const float BlendWeight)
+FPoseContext& FLbbOperatorExecutionContext::ResolveTarget(FLbbOperatorExecutionContext& Context, const FLbbCompiledPoseTarget& Target)
+{
+	if (Target.Kind == ELbbCompiledPoseTargetKind::CurrentPose)
 	{
-		FPoseContext BasePoseCopy(Context.OutputPose);
-		BasePoseCopy = BasePose;
-		FPoseContext BlendPoseCopy(Context.OutputPose);
-		BlendPoseCopy = BlendPose;
-
-		const FAnimationPoseData BasePoseData(BasePoseCopy);
-		const FAnimationPoseData BlendPoseData(BlendPoseCopy);
-		FAnimationPoseData OutputPoseData(TargetPose);
-		FAnimationRuntime::BlendTwoPosesTogether(BasePoseData, BlendPoseData, BlendWeight, OutputPoseData);
+		return Context.CurrentPose;
 	}
 
-	const FCompactPose& FOperatorExecutionContext::ResolveAdditivePose(const FOperatorExecutionContext& Context, const bool bMeshSpace)
+	check(Target.Kind == ELbbCompiledPoseTargetKind::CacheSlot);
+	check(Context.Inputs.CacheSlots != nullptr);
+	check(Context.Inputs.CacheSlots->IsValidIndex(Target.PoseIndex));
+	if (!(*Context.Inputs.CacheSlots)[Target.PoseIndex].IsSet())
 	{
-		const FCompactPose* AdditivePose = bMeshSpace ? Context.Inputs.AdditiveDeltaMS : Context.Inputs.AdditiveDeltaLS;
-		check(AdditivePose != nullptr);
-		return *AdditivePose;
+		(*Context.Inputs.CacheSlots)[Target.PoseIndex].Emplace(Context.CurrentPose);
 	}
+
+	return (*Context.Inputs.CacheSlots)[Target.PoseIndex].GetValue();
+}
+
+void FLbbOperatorExecutionContext::AssignTarget(FLbbOperatorExecutionContext& Context, const FLbbCompiledPoseTarget& Target, const FPoseContext& Source)
+{
+	FPoseContext& TargetPose = ResolveTarget(Context, Target);
+	TargetPose = Source;
+}
+
+bool FLbbOperatorExecutionContext::CanEvaluateSlot(const FLbbOperatorExecutionContext& Context, const int32 SlotNodeIndex)
+{
+	if (!Context.SlotNodesData.IsValidIndex(SlotNodeIndex))
+	{
+		return false;
+	}
+
+	const FLbbSlotNodeData& SlotNodeData = Context.SlotNodesData[SlotNodeIndex];
+	return SlotNodeData.HasSlotNodeBlending();
+}
+
+void FLbbOperatorExecutionContext::EvaluateSlot(const FLbbOperatorExecutionContext& Context, const int32 SlotNodeIndex, const FPoseContext& SourcePose, FPoseContext& TargetPose)
+{
+	check(Context.SlotNodesData.IsValidIndex(SlotNodeIndex));
+
+	const FLbbSlotNodeData& SlotNodeData = Context.SlotNodesData[SlotNodeIndex];
+
+	FPoseContext SourcePoseCopy(Context.CurrentPose);
+	SourcePoseCopy = SourcePose;
+
+	const FAnimationPoseData SourcePoseData(SourcePoseCopy);
+	FAnimationPoseData OutputPoseData(TargetPose);
+	Context.CurrentPose.AnimInstanceProxy->SlotEvaluatePose(
+		SlotNodeData.SlotNodeName,
+		SourcePoseData,
+		SlotNodeData.SourceWeight,
+		OutputPoseData,
+		SlotNodeData.SlotNodeWeight,
+		SlotNodeData.TotalNodeWeight);
+}
+
+void FLbbOperatorExecutionContext::MakeAdditive(
+	const FLbbOperatorExecutionContext& Context,
+	const FPoseContext& BasePose,
+	const FPoseContext& AdditivePose,
+	FPoseContext& TargetPose,
+	const bool bMeshSpace)
+{
+	FPoseContext BasePoseCopy(Context.CurrentPose);
+	BasePoseCopy = BasePose;
+	TargetPose = AdditivePose;
+	ConvertToAdditivePose(TargetPose, BasePoseCopy, bMeshSpace);
+}
+
+void FLbbOperatorExecutionContext::AccumulateAdditive(
+	const FLbbOperatorExecutionContext& Context,
+	FPoseContext& TargetPose,
+	const FPoseContext& AdditivePose,
+	const bool bMeshSpace,
+	const float BlendWeight)
+{
+	if (FAnimWeight::IsRelevant(BlendWeight))
+	{
+		AccumulateAdditivePose(TargetPose, AdditivePose, bMeshSpace, BlendWeight);
+	}
+}
+
+void FLbbOperatorExecutionContext::BlendTwoPoses(const FLbbOperatorExecutionContext& Context, const FPoseContext& BasePose, const FPoseContext& BlendPose, FPoseContext& TargetPose, const float BlendWeight)
+{
+	FPoseContext BasePoseCopy(Context.CurrentPose);
+	BasePoseCopy = BasePose;
+	FPoseContext BlendPoseCopy(Context.CurrentPose);
+	BlendPoseCopy = BlendPose;
+
+	const FAnimationPoseData BasePoseData(BasePoseCopy);
+	const FAnimationPoseData BlendPoseData(BlendPoseCopy);
+	FAnimationPoseData OutputPoseData(TargetPose);
+	FAnimationRuntime::BlendTwoPosesTogether(BasePoseData, BlendPoseData, BlendWeight, OutputPoseData);
 }

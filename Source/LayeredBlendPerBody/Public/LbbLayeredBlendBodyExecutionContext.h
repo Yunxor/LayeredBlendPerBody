@@ -5,40 +5,34 @@
 #include "Animation/AnimNodeBase.h"
 #include "Misc/Optional.h"
 
-namespace LbbLayeredBlendBodyPart
+struct FLbbCompiledPoseSource;
+struct FLbbCompiledPoseTarget;
+
+struct FLbbOperatorExecutionInputs
 {
-	struct FCompiledPoseSource;
-	struct FCompiledPoseTarget;
+	const FPoseContext& MotionPose;
+	const FPoseContext* BasePose = nullptr;
+	const FPoseContext* OverlayPose = nullptr;
+	TArray<TOptional<FPoseContext>, TInlineAllocator<4>>* CacheSlots = nullptr;
+};
 
-	struct FBodyPartExecutionInputs
-	{
-		const FPoseContext& MotionPose;
-		const FPoseContext* BasePose = nullptr;
-		const FPoseContext* OverlayPose = nullptr;
-		const FCompactPose* AdditiveDeltaLS = nullptr;
-		const FCompactPose* AdditiveDeltaMS = nullptr;
-	};
+struct FLbbOperatorExecutionContext
+{
+	const TArray<FLbbSlotNodeData>& SlotNodesData;
+	FPoseContext& CurrentPose;
+	const FLbbOperatorExecutionInputs& Inputs;
 
-	struct FOperatorExecutionContext
-	{
-		const TArray<FSlotNodeData>& SlotNodesData;
-		FPoseContext& OutputPose;
-		const FBodyPartExecutionInputs& Inputs;
-		TArray<TOptional<FPoseContext>, TInlineAllocator<4>> TemporaryPoses;
+	FLbbOperatorExecutionContext(
+		const TArray<FLbbSlotNodeData>& InSlotNodesData,
+		FPoseContext& InCurrentPose,
+		const FLbbOperatorExecutionInputs& InInputs);
 
-		FOperatorExecutionContext(
-			const TArray<FSlotNodeData>& InSlotNodesData,
-			FPoseContext& InOutputPose,
-			const FBodyPartExecutionInputs& InInputs,
-			int32 NumTemporaryPoses);
-
-		static const FPoseContext& ResolveSource(const FOperatorExecutionContext& Context, const FCompiledPoseSource& Source);
-		static FPoseContext& ResolveTarget(FOperatorExecutionContext& Context, const FCompiledPoseTarget& Target);
-		static void AssignTarget(FOperatorExecutionContext& Context, const FCompiledPoseTarget& Target, const FPoseContext& Source);
-		static bool CanEvaluateSlot(const FOperatorExecutionContext& Context, int32 SlotNodeIndex);
-		static void EvaluateSlot(const FOperatorExecutionContext& Context, int32 SlotNodeIndex, const FPoseContext& SourcePose, FPoseContext& TargetPose);
-		static void AccumulateAdditive(const FOperatorExecutionContext& Context, FPoseContext& TargetPose, bool bMeshSpace, float BlendWeight);
-		static void BlendTwoPoses(const FOperatorExecutionContext& Context, const FPoseContext& BasePose, const FPoseContext& BlendPose, FPoseContext& TargetPose, float BlendWeight);
-		static const FCompactPose& ResolveAdditivePose(const FOperatorExecutionContext& Context, bool bMeshSpace);
-	};
-}
+	static const FPoseContext& ResolveSource(const FLbbOperatorExecutionContext& Context, const FLbbCompiledPoseSource& Source);
+	static FPoseContext& ResolveTarget(FLbbOperatorExecutionContext& Context, const FLbbCompiledPoseTarget& Target);
+	static void AssignTarget(FLbbOperatorExecutionContext& Context, const FLbbCompiledPoseTarget& Target, const FPoseContext& Source);
+	static bool CanEvaluateSlot(const FLbbOperatorExecutionContext& Context, int32 SlotNodeIndex);
+	static void EvaluateSlot(const FLbbOperatorExecutionContext& Context, int32 SlotNodeIndex, const FPoseContext& SourcePose, FPoseContext& TargetPose);
+	static void MakeAdditive(const FLbbOperatorExecutionContext& Context, const FPoseContext& BasePose, const FPoseContext& AdditivePose, FPoseContext& TargetPose, bool bMeshSpace);
+	static void AccumulateAdditive(const FLbbOperatorExecutionContext& Context, FPoseContext& TargetPose, const FPoseContext& AdditivePose, bool bMeshSpace, float BlendWeight);
+	static void BlendTwoPoses(const FLbbOperatorExecutionContext& Context, const FPoseContext& BasePose, const FPoseContext& BlendPose, FPoseContext& TargetPose, float BlendWeight);
+};

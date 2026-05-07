@@ -3,75 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Animation/AnimData/BoneMaskFilter.h"
-#include "LbbLayeredBlendBodyTypes.h"
+#include "LbbLayeredBlendBodyGraphNodeData.h"
 #include "StructUtils/InstancedStruct.h"
 #include "LbbLayeredBlendBodyEditorModel.generated.h"
-
-UENUM()
-enum class ELbbLayeredBlendBodyGraphNodeType : uint8
-{
-	CurrentPose,
-	Motion,
-	BasePose,
-	OverlayPose,
-	Result,
-	ApplySlot,
-	Blend,
-	MaskedBlend,
-	ApplyMotionDelta,
-};
-
-USTRUCT()
-struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphNodeDataBase
-{
-	GENERATED_BODY()
-};
-
-USTRUCT()
-struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphNodeData_ApplySlot : public FLbbLayeredBlendBodyGraphNodeDataBase
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, Category = "Node")
-	FName SlotName = NAME_None;
-};
-
-USTRUCT()
-struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphNodeData_Blend : public FLbbLayeredBlendBodyGraphNodeDataBase
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, Category = "Node")
-	FLbbBlendWeight Weight;
-};
-
-USTRUCT()
-struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphNodeData_MaskedBlend : public FLbbLayeredBlendBodyGraphNodeDataBase
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, Category = "Node")
-	ELbbBoneSpace BlendSpace = ELbbBoneSpace::LocalSpace;
-
-	UPROPERTY(EditAnywhere, Category = "Node")
-	FInputBlendPose BoneFilter;
-
-	UPROPERTY(EditAnywhere, Category = "Node")
-	FLbbBlendWeight Weight;
-};
-
-USTRUCT()
-struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphNodeData_ApplyMotionDelta : public FLbbLayeredBlendBodyGraphNodeDataBase
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, Category = "Node")
-	ELbbBoneSpace AdditiveSpace = ELbbBoneSpace::LocalSpace;
-
-	UPROPERTY(EditAnywhere, Category = "Node")
-	FLbbBlendWeight Weight;
-};
 
 USTRUCT()
 struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphNodeModel
@@ -80,9 +14,6 @@ struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphNodeModel
 
 	UPROPERTY()
 	FGuid NodeGuid;
-
-	UPROPERTY()
-	ELbbLayeredBlendBodyGraphNodeType NodeType = ELbbLayeredBlendBodyGraphNodeType::CurrentPose;
 
 	UPROPERTY()
 	FVector2D NodePosition = FVector2D::ZeroVector;
@@ -110,18 +41,12 @@ struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphLinkModel
 };
 
 USTRUCT()
-struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyPartGraphModel
+struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphModelBase
 {
 	GENERATED_BODY()
 
 	UPROPERTY()
 	FGuid GraphGuid;
-
-	UPROPERTY(EditAnywhere, Category = "Settings")
-	FName PartName = NAME_None;
-
-	UPROPERTY(EditAnywhere, Category = "Settings")
-	FLinearColor DebugColor = FLinearColor::Green;
 
 	UPROPERTY()
 	TArray<FLbbLayeredBlendBodyGraphNodeModel> Nodes;
@@ -137,12 +62,33 @@ struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyPartGraphModel
 };
 
 USTRUCT()
+struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyCacheGraphModel : public FLbbLayeredBlendBodyGraphModelBase
+{
+	GENERATED_BODY()
+};
+
+USTRUCT()
+struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyPartGraphModel : public FLbbLayeredBlendBodyGraphModelBase
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "Settings")
+	FName PartName = NAME_None;
+
+	UPROPERTY(EditAnywhere, Category = "Settings")
+	FLinearColor DebugColor = FLinearColor::Green;
+};
+
+USTRUCT()
 struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyEditorModel
 {
 	GENERATED_BODY()
 
 	UPROPERTY()
-	int32 Version = 1;
+	int32 Version = 3;
+
+	UPROPERTY()
+	FLbbLayeredBlendBodyCacheGraphModel CacheGraph;
 
 	UPROPERTY()
 	TArray<FLbbLayeredBlendBodyPartGraphModel> BodyPartGraphs;

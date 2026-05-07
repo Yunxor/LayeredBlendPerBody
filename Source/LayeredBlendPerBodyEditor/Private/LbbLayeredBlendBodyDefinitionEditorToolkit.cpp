@@ -13,7 +13,9 @@
 #include "LbbLayeredBlendBodyEdGraph.h"
 #include "LbbLayeredBlendBodyEdGraphNode.h"
 #include "LbbLayeredBlendBodyGraphCompiler.h"
+#include "LbbLayeredBlendBodyGraphNodeRegistry.h"
 #include "LbbLayeredBlendBodyGraphSchema.h"
+#include "LbbLayeredBlendBodyOperators.h"
 #include "Logging/TokenizedMessage.h"
 #include "Modules/ModuleManager.h"
 #include "PropertyEditorModule.h"
@@ -163,6 +165,16 @@ namespace
 			: TEXT("N/A");
 	}
 
+	static FString GetGraphLabel(
+		const ULbbLayeredBlendBodyDefinition* Definition,
+		const ELbbLayeredBlendBodyGraphKind GraphKind,
+		const int32 BodyPartIndex)
+	{
+		return GraphKind == ELbbLayeredBlendBodyGraphKind::Cache
+			? TEXT("Cache Graph")
+			: GetBodyPartLabel(Definition, BodyPartIndex);
+	}
+
 	static FName MakeUniqueBodyPartName(const ULbbLayeredBlendBodyDefinition& Definition)
 	{
 		int32 Suffix = Definition.EditorModel.BodyPartGraphs.Num();
@@ -188,7 +200,7 @@ namespace
 		}
 	}
 
-	static void RemapGraphGuids(FLbbLayeredBlendBodyPartGraphModel& GraphModel)
+	static void RemapGraphGuids(FLbbLayeredBlendBodyGraphModelBase& GraphModel)
 	{
 		TMap<FGuid, FGuid> GuidRemap;
 		GraphModel.GraphGuid = FGuid::NewGuid();
@@ -213,33 +225,6 @@ namespace
 		}
 	}
 
-	static ULbbLayeredBlendBodyEdGraphNode* CreateNodeForType(UEdGraph* OuterGraph, const ELbbLayeredBlendBodyGraphNodeType NodeType)
-	{
-		switch (NodeType)
-		{
-		case ELbbLayeredBlendBodyGraphNodeType::CurrentPose:
-		case ELbbLayeredBlendBodyGraphNodeType::Motion:
-		case ELbbLayeredBlendBodyGraphNodeType::BasePose:
-		case ELbbLayeredBlendBodyGraphNodeType::OverlayPose:
-		{
-			ULbbLayeredBlendBodyEdGraphNode_FixedPose* FixedNode = NewObject<ULbbLayeredBlendBodyEdGraphNode_FixedPose>(OuterGraph, NAME_None, RF_Transactional);
-			FixedNode->FixedNodeType = NodeType;
-			return FixedNode;
-		}
-		case ELbbLayeredBlendBodyGraphNodeType::Result:
-			return NewObject<ULbbLayeredBlendBodyEdGraphNode_Result>(OuterGraph, NAME_None, RF_Transactional);
-		case ELbbLayeredBlendBodyGraphNodeType::ApplySlot:
-			return NewObject<ULbbLayeredBlendBodyEdGraphNode_ApplySlot>(OuterGraph, NAME_None, RF_Transactional);
-		case ELbbLayeredBlendBodyGraphNodeType::Blend:
-			return NewObject<ULbbLayeredBlendBodyEdGraphNode_Blend>(OuterGraph, NAME_None, RF_Transactional);
-		case ELbbLayeredBlendBodyGraphNodeType::MaskedBlend:
-			return NewObject<ULbbLayeredBlendBodyEdGraphNode_MaskedBlend>(OuterGraph, NAME_None, RF_Transactional);
-		case ELbbLayeredBlendBodyGraphNodeType::ApplyMotionDelta:
-			return NewObject<ULbbLayeredBlendBodyEdGraphNode_ApplyMotionDelta>(OuterGraph, NAME_None, RF_Transactional);
-		default:
-			return nullptr;
-		}
-	}
 }
 
 const FName FLbbLayeredBlendBodyDefinitionEditorToolkit::BodyPartListTabId(TEXT("LbbLayeredBlendBodyDefinitionEditorToolkit_BodyParts"));
@@ -275,6 +260,12 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::InitEditor(
 	}
 
 	EditingDefinition = InDefinition;
+	if (EditingDefinition.IsValid() && !EditingDefinition->EditorModel.CacheGraph.GraphGuid.IsValid())
+	{
+		EditingDefinition->Modify();
+		FLbbLayeredBlendBodyGraphCompiler::CreateDefaultCacheGraph(EditingDefinition->EditorModel.CacheGraph);
+	}
+
 	BodyPartCommandList = MakeShared<FUICommandList>();
 	BodyPartDetailsObject = NewObject<ULbbLayeredBlendBodyBodyPartDetailsObject>(GetTransientPackage(), NAME_None, RF_Transactional);
 	BindBodyPartCommands();
@@ -292,8 +283,9 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::InitEditor(
 	if (BodyPartItems.Num() > 0)
 	{
 		CurrentBodyPartIndex = 0;
-		RefreshBodyPartDetailsObject();
 	}
+	CurrentGraphKind = ELbbLayeredBlendBodyGraphKind::Cache;
+	RefreshBodyPartDetailsObject();
 
 	const TSharedRef<FTabManager::FLayout> Layout = FTabManager::NewLayout("Standalone_LbbLayeredBlendBodyDefinitionEditor_v2")
 		->AddArea
@@ -344,7 +336,11 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::InitEditor(
 
 	RegenerateMenusAndToolbars();
 
-	if (CurrentBodyPartIndex != INDEX_NONE)
+	if (CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::Cache)
+	{
+		SelectCacheGraph(true);
+	}
+	else if (CurrentBodyPartIndex != INDEX_NONE)
 	{
 		SelectBodyPart(CurrentBodyPartIndex);
 	}
@@ -511,7 +507,11 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshBodyPartItems()
 	if (BodyPartListView.IsValid())
 	{
 		BodyPartListView->RequestListRefresh();
-		if (BodyPartItems.IsValidIndex(CurrentBodyPartIndex))
+		if (CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::Cache)
+		{
+			BodyPartListView->ClearSelection();
+		}
+		else if (BodyPartItems.IsValidIndex(CurrentBodyPartIndex))
 		{
 			BodyPartListView->SetSelection(BodyPartItems[CurrentBodyPartIndex], ESelectInfo::Direct);
 		}
@@ -522,14 +522,35 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshBodyPartItems()
 	}
 }
 
-void FLbbLayeredBlendBodyDefinitionEditorToolkit::SelectBodyPart(const int32 BodyPartIndex, const bool bForceRebuild)
+void FLbbLayeredBlendBodyDefinitionEditorToolkit::SelectCacheGraph(const bool bForceRebuild)
 {
-	if (!bForceRebuild && CurrentBodyPartIndex == BodyPartIndex && CurrentGraph != nullptr)
+	if (!bForceRebuild && CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::Cache && CurrentGraph != nullptr)
 	{
 		return;
 	}
 
 	SyncCurrentGraphToModel();
+	CurrentGraphKind = ELbbLayeredBlendBodyGraphKind::Cache;
+	RefreshBodyPartDetailsObject();
+	RebuildCurrentGraph();
+	RebuildGraphWidget();
+	RefreshDetailsPanel();
+	RefreshBodyPartItems();
+	CompileDefinition(false, false);
+}
+
+void FLbbLayeredBlendBodyDefinitionEditorToolkit::SelectBodyPart(const int32 BodyPartIndex, const bool bForceRebuild)
+{
+	if (!bForceRebuild
+		&& CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::BodyPart
+		&& CurrentBodyPartIndex == BodyPartIndex
+		&& CurrentGraph != nullptr)
+	{
+		return;
+	}
+
+	SyncCurrentGraphToModel();
+	CurrentGraphKind = ELbbLayeredBlendBodyGraphKind::BodyPart;
 	CurrentBodyPartIndex = BodyPartIndex;
 	RefreshBodyPartDetailsObject();
 	RebuildCurrentGraph();
@@ -540,17 +561,19 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::SelectBodyPart(const int32 Bod
 }
 
 void FLbbLayeredBlendBodyDefinitionEditorToolkit::ApplyCompileMessagesToCurrentGraph(
-	const LbbLayeredBlendBodyPartEditor::FCompileResult& CompileResult)
+	const FLbbCompileResult& CompileResult)
 {
 	if (CurrentGraph == nullptr)
 	{
 		return;
 	}
 
-	TMap<FGuid, TArray<const LbbLayeredBlendBodyPartEditor::FCompileMessage*>> MessagesByNodeGuid;
-	for (const LbbLayeredBlendBodyPartEditor::FCompileMessage& Message : CompileResult.Messages)
+	TMap<FGuid, TArray<const FLbbCompileMessage*>> MessagesByNodeGuid;
+	for (const FLbbCompileMessage& Message : CompileResult.Messages)
 	{
-		if (Message.BodyPartIndex == CurrentBodyPartIndex && Message.NodeGuid.IsValid())
+		const bool bMatchesCurrentGraph = (Message.GraphKind == CurrentGraphKind)
+			&& (Message.GraphKind == ELbbLayeredBlendBodyGraphKind::Cache || Message.BodyPartIndex == CurrentBodyPartIndex);
+		if (bMatchesCurrentGraph && Message.NodeGuid.IsValid())
 		{
 			MessagesByNodeGuid.FindOrAdd(Message.NodeGuid).Add(&Message);
 		}
@@ -574,7 +597,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::ApplyCompileMessagesToCurrentG
 			continue;
 		}
 
-		const TArray<const LbbLayeredBlendBodyPartEditor::FCompileMessage*>* NodeMessages = MessagesByNodeGuid.Find(LbbNode->NodeGuid);
+		const TArray<const FLbbCompileMessage*>* NodeMessages = MessagesByNodeGuid.Find(LbbNode->NodeGuid);
 		if (NodeMessages == nullptr || NodeMessages->IsEmpty())
 		{
 			continue;
@@ -582,7 +605,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::ApplyCompileMessagesToCurrentG
 
 		EMessageSeverity::Type HighestSeverity = EMessageSeverity::Info;
 		FString ErrorText;
-		for (const LbbLayeredBlendBodyPartEditor::FCompileMessage* Message : *NodeMessages)
+		for (const FLbbCompileMessage* Message : *NodeMessages)
 		{
 			if (Message == nullptr)
 			{
@@ -615,21 +638,38 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RebuildCurrentGraph()
 	CurrentGraph = nullptr;
 
 	const ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
-	if (Definition == nullptr || !Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
+	if (Definition == nullptr)
 	{
 		return;
 	}
 
-	const FLbbLayeredBlendBodyPartGraphModel& GraphModel = Definition->EditorModel.BodyPartGraphs[CurrentBodyPartIndex];
+	const FLbbLayeredBlendBodyGraphModelBase* GraphModel = nullptr;
+	if (CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::Cache)
+	{
+		GraphModel = &Definition->EditorModel.CacheGraph;
+	}
+	else if (Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
+	{
+		GraphModel = &Definition->EditorModel.BodyPartGraphs[CurrentBodyPartIndex];
+	}
+
+	if (GraphModel == nullptr)
+	{
+		return;
+	}
 
 	CurrentGraph = NewObject<ULbbLayeredBlendBodyEdGraph>(GetTransientPackage(), NAME_None, RF_Transactional);
 	CurrentGraph->Schema = ULbbLayeredBlendBodyGraphSchema::StaticClass();
-	CurrentGraph->BodyPartIndex = CurrentBodyPartIndex;
+	CurrentGraph->EditingDefinition = EditingDefinition.Get();
+	CurrentGraph->GraphKind = CurrentGraphKind;
+	CurrentGraph->BodyPartIndex = CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::BodyPart ? CurrentBodyPartIndex : INDEX_NONE;
 
 	TMap<FGuid, ULbbLayeredBlendBodyEdGraphNode*> NodesByGuid;
-	for (const FLbbLayeredBlendBodyGraphNodeModel& NodeModel : GraphModel.Nodes)
+	for (const FLbbLayeredBlendBodyGraphNodeModel& NodeModel : GraphModel->Nodes)
 	{
-		ULbbLayeredBlendBodyEdGraphNode* Node = CreateNodeForType(CurrentGraph, NodeModel.NodeType);
+		ULbbLayeredBlendBodyEdGraphNode* Node = CreateLbbLayeredBlendBodyNodeForDataStruct(
+			CurrentGraph,
+			NodeModel.NodeData.GetScriptStruct());
 		if (Node == nullptr)
 		{
 			continue;
@@ -641,7 +681,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RebuildCurrentGraph()
 		NodesByGuid.Add(Node->NodeGuid, Node);
 	}
 
-	for (const FLbbLayeredBlendBodyGraphLinkModel& LinkModel : GraphModel.Links)
+	for (const FLbbLayeredBlendBodyGraphLinkModel& LinkModel : GraphModel->Links)
 	{
 		ULbbLayeredBlendBodyEdGraphNode* const* FromNodePtr = NodesByGuid.Find(LinkModel.FromNodeGuid);
 		ULbbLayeredBlendBodyEdGraphNode* const* ToNodePtr = NodesByGuid.Find(LinkModel.ToNodeGuid);
@@ -687,7 +727,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RebuildGraphWidget()
 				.Padding(8.f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("NoBodyPartSelected", "No BodyPart selected."))
+					.Text(LOCTEXT("NoGraphSelected", "No graph selected."))
 				]
 				+ SVerticalBox::Slot()
 				.AutoHeight()
@@ -695,7 +735,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RebuildGraphWidget()
 				.Padding(8.f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("NoBodyPartSelectedHint", "Create a BodyPart to start authoring its blend graph."))
+					.Text(LOCTEXT("NoGraphSelectedHint", "Create a BodyPart or switch to Cache Graph to start authoring."))
 				]
 				+ SVerticalBox::Slot()
 				.AutoHeight()
@@ -726,25 +766,49 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RebuildGraphWidget()
 
 	if (const ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get())
 	{
-		if (Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
+		const FLbbLayeredBlendBodyGraphModelBase* GraphModel = nullptr;
+		if (CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::Cache)
 		{
-			const FLbbLayeredBlendBodyPartGraphModel& GraphModel = Definition->EditorModel.BodyPartGraphs[CurrentBodyPartIndex];
-			GraphEditorWidget->SetViewLocation(FVector2f(GraphModel.SavedViewLocation), GraphModel.SavedZoomAmount);
+			GraphModel = &Definition->EditorModel.CacheGraph;
+		}
+		else if (Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
+		{
+			GraphModel = &Definition->EditorModel.BodyPartGraphs[CurrentBodyPartIndex];
+		}
+
+		if (GraphModel != nullptr)
+		{
+			GraphEditorWidget->SetViewLocation(FVector2f(GraphModel->SavedViewLocation), GraphModel->SavedZoomAmount);
 		}
 	}
 }
 
 void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshBodyPartCompileSummaries(
-	const LbbLayeredBlendBodyPartEditor::FCompileResult& CompileResult)
+	const FLbbCompileResult& CompileResult)
 {
 	const ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
 	const int32 BodyPartCount = Definition != nullptr ? Definition->EditorModel.BodyPartGraphs.Num() : 0;
 
+	CacheGraphCompileSummary = FBodyPartCompileSummary();
 	BodyPartCompileSummaries.Reset();
 	BodyPartCompileSummaries.SetNum(BodyPartCount);
 
-	for (const LbbLayeredBlendBodyPartEditor::FCompileMessage& Message : CompileResult.Messages)
+	for (const FLbbCompileMessage& Message : CompileResult.Messages)
 	{
+		if (Message.GraphKind == ELbbLayeredBlendBodyGraphKind::Cache)
+		{
+			FBodyPartCompileSummary& Summary = CacheGraphCompileSummary;
+			if (Message.Severity == EMessageSeverity::Error)
+			{
+				++Summary.ErrorCount;
+			}
+			else if (Message.Severity == EMessageSeverity::Warning || Message.Severity == EMessageSeverity::PerformanceWarning)
+			{
+				++Summary.WarningCount;
+			}
+			continue;
+		}
+
 		if (!BodyPartCompileSummaries.IsValidIndex(Message.BodyPartIndex))
 		{
 			continue;
@@ -785,7 +849,10 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshDetailsPanel()
 		}
 	}
 
-	if (BodyPartDetailsObject != nullptr && EditingDefinition.IsValid() && EditingDefinition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
+	if (BodyPartDetailsObject != nullptr
+		&& CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::BodyPart
+		&& EditingDefinition.IsValid()
+		&& EditingDefinition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
 	{
 		DetailsView->SetObject(BodyPartDetailsObject);
 	}
@@ -803,7 +870,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::SyncCurrentGraphToModel()
 	}
 
 	ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
-	if (Definition == nullptr || !Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
+	if (Definition == nullptr)
 	{
 		return;
 	}
@@ -811,15 +878,29 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::SyncCurrentGraphToModel()
 	TGuardValue<bool> Guard(bIsSynchronizing, true);
 
 	Definition->Modify();
-	FLbbLayeredBlendBodyPartGraphModel& GraphModel = Definition->EditorModel.BodyPartGraphs[CurrentBodyPartIndex];
-	GraphModel.Nodes.Reset();
-	GraphModel.Links.Reset();
+	FLbbLayeredBlendBodyGraphModelBase* GraphModel = nullptr;
+	if (CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::Cache)
+	{
+		GraphModel = &Definition->EditorModel.CacheGraph;
+	}
+	else if (Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
+	{
+		GraphModel = &Definition->EditorModel.BodyPartGraphs[CurrentBodyPartIndex];
+	}
+
+	if (GraphModel == nullptr)
+	{
+		return;
+	}
+
+	GraphModel->Nodes.Reset();
+	GraphModel->Links.Reset();
 
 	for (UEdGraphNode* GraphNode : CurrentGraph->Nodes)
 	{
 		if (ULbbLayeredBlendBodyEdGraphNode* Node = Cast<ULbbLayeredBlendBodyEdGraphNode>(GraphNode))
 		{
-			FLbbLayeredBlendBodyGraphNodeModel& NodeModel = GraphModel.Nodes.AddDefaulted_GetRef();
+			FLbbLayeredBlendBodyGraphNodeModel& NodeModel = GraphModel->Nodes.AddDefaulted_GetRef();
 			Node->ExportToNodeModel(NodeModel);
 		}
 	}
@@ -852,7 +933,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::SyncCurrentGraphToModel()
 					continue;
 				}
 
-				FLbbLayeredBlendBodyGraphLinkModel& LinkModel = GraphModel.Links.AddDefaulted_GetRef();
+				FLbbLayeredBlendBodyGraphLinkModel& LinkModel = GraphModel->Links.AddDefaulted_GetRef();
 				LinkModel.FromNodeGuid = Node->NodeGuid;
 				LinkModel.FromPinName = Pin->PinName;
 				LinkModel.ToNodeGuid = LinkedNode->NodeGuid;
@@ -866,8 +947,8 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::SyncCurrentGraphToModel()
 		FVector2f ViewLocation = FVector2f::ZeroVector;
 		float ZoomAmount = 1.f;
 		GraphEditorWidget->GetViewLocation(ViewLocation, ZoomAmount);
-		GraphModel.SavedViewLocation = FVector2D(ViewLocation);
-		GraphModel.SavedZoomAmount = ZoomAmount;
+		GraphModel->SavedViewLocation = FVector2D(ViewLocation);
+		GraphModel->SavedZoomAmount = ZoomAmount;
 	}
 
 	Definition->MarkPackageDirty();
@@ -881,7 +962,9 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::SyncBodyPartDetailsToModel()
 	}
 
 	ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
-	if (Definition == nullptr || !Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
+	if (CurrentGraphKind != ELbbLayeredBlendBodyGraphKind::BodyPart
+		|| Definition == nullptr
+		|| !Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
 	{
 		return;
 	}
@@ -901,7 +984,9 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshBodyPartDetailsObject()
 	}
 
 	const ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
-	if (Definition == nullptr || !Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
+	if (CurrentGraphKind != ELbbLayeredBlendBodyGraphKind::BodyPart
+		|| Definition == nullptr
+		|| !Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
 	{
 		BodyPartDetailsObject->PartName = NAME_None;
 		BodyPartDetailsObject->DebugColor = FLinearColor::Green;
@@ -924,8 +1009,8 @@ bool FLbbLayeredBlendBodyDefinitionEditorToolkit::CompileDefinition(const bool b
 	SyncCurrentGraphToModel();
 	SyncBodyPartDetailsToModel();
 
-	const LbbLayeredBlendBodyPartEditor::FCompileResult CompileResult
-		= LbbLayeredBlendBodyPartEditor::FLbbLayeredBlendBodyGraphCompiler::Compile(*Definition);
+	const FLbbCompileResult CompileResult
+		= FLbbLayeredBlendBodyGraphCompiler::Compile(*Definition);
 
 	RefreshBodyPartCompileSummaries(CompileResult);
 	ApplyCompileMessagesToCurrentGraph(CompileResult);
@@ -947,7 +1032,7 @@ bool FLbbLayeredBlendBodyDefinitionEditorToolkit::CompileDefinition(const bool b
 }
 
 void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshCompileMessages(
-	const LbbLayeredBlendBodyPartEditor::FCompileResult& CompileResult)
+	const FLbbCompileResult& CompileResult)
 {
 	CompileMessageItems.Reset();
 
@@ -966,25 +1051,26 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshCompileMessages(
 	else
 	{
 		const ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
-		for (const LbbLayeredBlendBodyPartEditor::FCompileMessage& Message : CompileResult.Messages)
+		for (const FLbbCompileMessage& Message : CompileResult.Messages)
 		{
-			const FString BodyPartLabel = GetBodyPartLabel(Definition, Message.BodyPartIndex);
+			const FString GraphLabel = GetGraphLabel(Definition, Message.GraphKind, Message.BodyPartIndex);
 
 			TSharedPtr<FCompileMessageListItem> Item = MakeShared<FCompileMessageListItem>();
 			Item->Severity = Message.Severity;
+			Item->GraphKind = Message.GraphKind;
 			Item->BodyPartIndex = Message.BodyPartIndex;
 			Item->NodeGuid = Message.NodeGuid;
-			Item->bCanNavigate = Message.BodyPartIndex != INDEX_NONE;
+			Item->bCanNavigate = Message.GraphKind == ELbbLayeredBlendBodyGraphKind::Cache || Message.BodyPartIndex != INDEX_NONE;
 			Item->DisplayText = FText::FromString(FString::Printf(
-				TEXT("[%s] [BodyPart %s] %s"),
+				TEXT("[%s] [%s] %s"),
 				*GetSeverityLabel(Message.Severity),
-				*BodyPartLabel,
+				*GraphLabel,
 				*Message.Message));
 			Item->ToolTipText = Item->bCanNavigate
 				? FText::FromString(FString::Printf(
-					TEXT("[%s] [BodyPart %s] %s\nClick to locate this message in the graph."),
+					TEXT("[%s] [%s] %s\nClick to locate this message in the graph."),
 					*GetSeverityLabel(Message.Severity),
-					*BodyPartLabel,
+					*GraphLabel,
 					*Message.Message))
 				: Item->DisplayText;
 			CompileMessageItems.Add(Item);
@@ -1016,14 +1102,36 @@ FString FLbbLayeredBlendBodyDefinitionEditorToolkit::BuildCompiledOperatorsPrevi
 
 	TArray<FString> Lines;
 	Lines.Reserve(64);
-	Lines.Add(TEXT("Preview Source: Runtime BodyParts stored on this asset."));
+	Lines.Add(TEXT("Preview Source: Runtime Cache Graph + BodyParts stored on this asset."));
 	Lines.Add(TEXT("This panel reflects the current compiled uasset data, not the transient editor graph."));
+
+	const FString CachePrefix = CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::Cache ? TEXT(">> ") : TEXT("   ");
+	Lines.Add(TEXT(""));
+	Lines.Add(FString::Printf(TEXT("%s[Cache Graph]"), *CachePrefix));
+	Lines.Add(FString::Printf(TEXT("Named Caches: %d"), Definition->CacheProgram.NamedCacheNames.Num()));
+	Lines.Add(FString::Printf(TEXT("Operators: %d"), Definition->CacheProgram.Operators.Num()));
+	if (Definition->CacheProgram.Operators.IsEmpty())
+	{
+		Lines.Add(TEXT("  <No operators>"));
+	}
+	else
+	{
+		for (int32 OperatorIndex = 0; OperatorIndex < Definition->CacheProgram.Operators.Num(); ++OperatorIndex)
+		{
+			FString OperatorText = TEXT("<Invalid Operator>");
+			if (const FLbbLayeredBlendBodyPartOperatorBase* Operator = Definition->CacheProgram.Operators[OperatorIndex].GetPtr<FLbbLayeredBlendBodyPartOperatorBase>())
+			{
+				OperatorText = Operator->ToString();
+			}
+
+			Lines.Add(FString::Printf(TEXT("  %d. %s"), OperatorIndex + 1, *OperatorText));
+		}
+	}
 
 	if (Definition->BodyParts.IsEmpty())
 	{
 		Lines.Add(TEXT(""));
 		Lines.Add(TEXT("No compiled BodyParts are currently stored on the asset."));
-		Lines.Add(TEXT("Compile successfully to populate or refresh this runtime preview."));
 		return FString::Join(Lines, TEXT("\n"));
 	}
 
@@ -1033,7 +1141,7 @@ FString FLbbLayeredBlendBodyDefinitionEditorToolkit::BuildCompiledOperatorsPrevi
 		const FString PartName = BodyPart.PartName.IsNone()
 			? FString::Printf(TEXT("BodyPart_%d"), BodyPartIndex + 1)
 			: BodyPart.PartName.ToString();
-		const FString BodyPartPrefix = BodyPartIndex == CurrentBodyPartIndex ? TEXT(">> ") : TEXT("   ");
+		const FString BodyPartPrefix = (CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::BodyPart && BodyPartIndex == CurrentBodyPartIndex) ? TEXT(">> ") : TEXT("   ");
 
 		if (BodyPartIndex > 0)
 		{
@@ -1074,7 +1182,11 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::NavigateToCompileMessage(const
 		return;
 	}
 
-	if (Item.BodyPartIndex != INDEX_NONE && Item.BodyPartIndex != CurrentBodyPartIndex)
+	if (Item.GraphKind == ELbbLayeredBlendBodyGraphKind::Cache)
+	{
+		SelectCacheGraph();
+	}
+	else if (Item.BodyPartIndex != INDEX_NONE && Item.BodyPartIndex != CurrentBodyPartIndex)
 	{
 		SelectBodyPart(Item.BodyPartIndex);
 	}
@@ -1159,7 +1271,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::HandleAddBodyPart()
 	Definition->Modify();
 
 	FLbbLayeredBlendBodyPartGraphModel& NewGraphModel = Definition->EditorModel.BodyPartGraphs.AddDefaulted_GetRef();
-	LbbLayeredBlendBodyPartEditor::FLbbLayeredBlendBodyGraphCompiler::CreateDefaultBodyPartGraph(NewGraphModel, MakeUniqueBodyPartName(*Definition));
+	FLbbLayeredBlendBodyGraphCompiler::CreateDefaultBodyPartGraph(NewGraphModel, MakeUniqueBodyPartName(*Definition));
 	Definition->MarkPackageDirty();
 
 	RefreshBodyPartItems();
@@ -1274,7 +1386,9 @@ bool FLbbLayeredBlendBodyDefinitionEditorToolkit::CanAddBodyPart() const
 bool FLbbLayeredBlendBodyDefinitionEditorToolkit::HasValidBodyPartSelection() const
 {
 	const ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
-	return Definition != nullptr && Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex);
+	return CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::BodyPart
+		&& Definition != nullptr
+		&& Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex);
 }
 
 bool FLbbLayeredBlendBodyDefinitionEditorToolkit::CanDuplicateBodyPart() const
@@ -1295,7 +1409,8 @@ bool FLbbLayeredBlendBodyDefinitionEditorToolkit::CanMoveBodyPartUp() const
 bool FLbbLayeredBlendBodyDefinitionEditorToolkit::CanMoveBodyPartDown() const
 {
 	const ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
-	return Definition != nullptr
+	return CurrentGraphKind == ELbbLayeredBlendBodyGraphKind::BodyPart
+		&& Definition != nullptr
 		&& Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex)
 		&& Definition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex + 1);
 }
@@ -1565,7 +1680,7 @@ TSharedPtr<SWidget> FLbbLayeredBlendBodyDefinitionEditorToolkit::HandleBodyPartL
 	return MenuBuilder.MakeWidget();
 }
 
-	TSharedRef<SWidget> FLbbLayeredBlendBodyDefinitionEditorToolkit::BuildBodyPartListTabContent()
+TSharedRef<SWidget> FLbbLayeredBlendBodyDefinitionEditorToolkit::BuildBodyPartListTabContent()
 {
 	auto MakeBodyPartToolBarWidget = [this]() -> TSharedRef<SWidget>
 	{
@@ -1594,11 +1709,56 @@ TSharedPtr<SWidget> FLbbLayeredBlendBodyDefinitionEditorToolkit::HandleBodyPartL
 			.Padding(FMargin(0.0f))
 			[
 				ToolbarBuilder.MakeWidget()
+		];
+	};
+
+	auto MakeCacheGraphButton = [this]() -> TSharedRef<SWidget>
+	{
+		return SNew(SButton)
+			.ButtonStyle(&FAppStyle::Get(), "FlatButton")
+			.ContentPadding(FMargin(10.f, 8.f))
+			.OnClicked_Lambda([this]() -> FReply
+			{
+				SelectCacheGraph();
+				return FReply::Handled();
+			})
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.Text(LOCTEXT("CacheGraphLabel", "Cache Graph"))
+				]
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					SNew(STextBlock)
+					.ColorAndOpacity(FSlateColor(FLinearColor(0.65f, 0.75f, 0.95f)))
+					.Text_Lambda([this]() -> FText
+					{
+						const ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
+						const int32 NodeCount = Definition != nullptr ? Definition->EditorModel.CacheGraph.Nodes.Num() : 0;
+						const int32 NamedCacheCount = Definition != nullptr ? Definition->CacheProgram.NamedCacheNames.Num() : 0;
+						return FText::FromString(FString::Printf(
+							TEXT("Nodes: %d  Named Caches: %d  Errors: %d  Warnings: %d"),
+							NodeCount,
+							NamedCacheCount,
+							CacheGraphCompileSummary.ErrorCount,
+							CacheGraphCompileSummary.WarningCount));
+					})
+				]
 			];
 	};
 
 	TSharedRef<SWidget> Widget =
 		SNew(SVerticalBox)
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(4.f)
+		[
+			MakeCacheGraphButton()
+		]
 		+ SVerticalBox::Slot()
 		.AutoHeight()
 		.Padding(4.f)

@@ -9,251 +9,6 @@ static TAutoConsoleVariable<int32> CVarAnimNodeLayeredBodyPartDrawDebug(TEXT("lb
 static TAutoConsoleVariable<float> CVarAnimNodeLayeredBodyPartDebugDrawSizeScale(TEXT("lbb.AnimNode.LayeredBodyPartBlend.Debug.DrawSizeScale"), 1, TEXT("Scale bone size."));
 #endif
 
-namespace LbbLayeredBlendBodyPart
-{
-	class FOperatorCompileContext final : public IOperatorCompileContext
-	{
-	public:
-		explicit FOperatorCompileContext(FBodyPartRuntimeData& InRuntimeData)
-			: RuntimeData(InRuntimeData)
-		{
-		}
-
-		virtual FCompiledPoseSource CompileSource(const FLbbLayeredBodyPartPoseSource& InSource) override
-		{
-			FCompiledPoseSource OutSource;
-			
-			OutSource.Type = InSource.Type;
-			if (InSource.Type == ELbbLayeredBodyPartPoseSourceType::TemporaryPose)
-			{
-				OutSource.TemporaryPoseIndex = FindOrAddTemporaryPose(InSource.TemporaryPoseName);
-			}
-			
-			return OutSource;
-		}
-
-		virtual FCompiledPoseTarget CompileTarget(const FLbbLayeredBodyPartPoseTarget& InTarget) override
-		{
-			FCompiledPoseTarget OutTarget;
-			
-			OutTarget.Type = InTarget.Type;
-			if (InTarget.Type == ELbbLayeredBodyPartPoseTargetType::TemporaryPose)
-			{
-				OutTarget.TemporaryPoseIndex = FindOrAddTemporaryPose(InTarget.TemporaryPoseName);
-			}
-
-			return OutTarget;
-		}
-
-		virtual int32 FindOrAddSlotNode(const FName SlotName) override
-		{
-			if (SlotName.IsNone())
-			{
-				return INDEX_NONE;
-			}
-
-			for (int32 Index = 0; Index < RuntimeData.SlotNodesData.Num(); ++Index)
-			{
-				if (RuntimeData.SlotNodesData[Index].SlotNodeName == SlotName)
-				{
-					return Index;
-				}
-			}
-
-			const int32 NewIndex = RuntimeData.SlotNodesData.Add(FSlotNodeData(SlotName));
-			return NewIndex;
-		}
-
-		int32 FindOrAddTemporaryPose(const FName TempPoseName)
-		{
-			if (TempPoseName.IsNone())
-			{
-				return INDEX_NONE;
-			}
-
-			if (const int32* ExistingIndex = TemporaryPoseIndexMap.Find(TempPoseName))
-			{
-				return *ExistingIndex;
-			}
-
-			const int32 NewIndex = RuntimeData.NumTemporaryPoses++;
-			TemporaryPoseIndexMap.Add(TempPoseName, NewIndex);
-			return NewIndex;
-		}
-
-	private:
-		FBodyPartRuntimeData& RuntimeData;
-		TMap<FName, int32> TemporaryPoseIndexMap;
-	};
-}
-
-namespace LbbLayeredBlendBodyPart
-{
-
-	FBodyPartRuntimeData::FBodyPartRuntimeData()
-	{
-	}
-
-	void FBodyPartRuntimeData::Reset()
-	{
-		Operators.Reset();
-		NumTemporaryPoses = 0;
-		SlotNodesData.Reset();
-
-		bNeedsBasePose = false;
-		bNeedsOverlayPose = false;
-		bNeedsMeshSpaceAdditive = false;
-		bNeedsLocalSpaceAdditive = false;
-		bNeedsSlotEvaluation = false;
-		bCanAffectOutput = false;
-	}
-
-	void FBodyPartRuntimeData::InitFromDefinition(const FLbbLayeredBlendBodyPart& BodyPartDefinition)
-	{
-		Reset();
-		FOperatorCompileContext CompileContext(*this);
-
-		auto AddOperator = [this](TUniquePtr<FCompiledOperator>&& Operator)
-		{
-			if (!Operator.IsValid())
-			{
-				return;
-			}
-
-			FOperatorRequirements Requirements;
-			Operator->AccumulateRequirements(Requirements);
-			bNeedsBasePose |= Requirements.bNeedsBasePose;
-			bNeedsOverlayPose |= Requirements.bNeedsOverlayPose;
-			bNeedsMeshSpaceAdditive |= Requirements.bNeedsMeshSpaceAdditive;
-			bNeedsLocalSpaceAdditive |= Requirements.bNeedsLocalSpaceAdditive;
-			bNeedsSlotEvaluation |= Requirements.bNeedsSlotEvaluation;
-			bCanAffectOutput |= Requirements.bCanAffectOutput;
-
-			Operators.Add(MoveTemp(Operator));
-		};
-
-		for (const FInstancedStruct& OperatorData : BodyPartDefinition.Operators)
-		{
-			const FLbbLayeredBlendBodyPartOperatorBase* OperatorDefinition = OperatorData.GetPtr<FLbbLayeredBlendBodyPartOperatorBase>();
-			if (OperatorDefinition == nullptr || !OperatorDefinition->bEnabled)
-			{
-				continue;
-			}
-
-			AddOperator(OperatorDefinition->CreateCompiledOperator(CompileContext));
-		}
-	}
-
-	void FBodyPartRuntimeData::BuildBodyBoneBlendWeights(const USkeleton* InSkeleton)
-	{
-		for (TUniquePtr<FCompiledOperator>& Operator : Operators)
-		{
-			Operator->BuildBoneBlendWeights(InSkeleton);
-		}
-	}
-
-	void FBodyPartRuntimeData::RebuildDesiredBoneWeights(const FBoneContainer& RequiredBones)
-	{
-		for (TUniquePtr<FCompiledOperator>& Operator : Operators)
-		{
-			Operator->RebuildBoneBlendWeights(RequiredBones);
-		}
-	}
-
-	void FBodyPartRuntimeData::UpdateBlendWeights(const FAnimationUpdateContext& Context)
-	{
-		for (TUniquePtr<FCompiledOperator>& Operator : Operators)
-		{
-			Operator->UpdateBlendWeight(Context.AnimInstanceProxy);
-		}
-	}
-
-	void FBodyPartRuntimeData::UpdateSlotNodeWeights(const FAnimationUpdateContext& Context)
-	{
-		for (FSlotNodeData& NodeData : SlotNodesData)
-		{
-			if (NodeData.SlotNodeName.IsNone())
-			{
-				NodeData.SlotNodeWeight = 0.f;
-				NodeData.SourceWeight = 0.f;
-				NodeData.TotalNodeWeight = 0.f;
-				continue;
-			}
-
-			Context.AnimInstanceProxy->GetSlotWeight(NodeData.SlotNodeName, NodeData.SlotNodeWeight, NodeData.SourceWeight, NodeData.TotalNodeWeight);
-			Context.AnimInstanceProxy->UpdateSlotNodeWeight(NodeData.SlotNodeName, NodeData.SlotNodeWeight, Context.GetFinalBlendWeight());
-		}
-	}
-
-	FRuntimeData::FRuntimeData()
-	{
-	}
-
-	void FRuntimeData::InitFromDefinition(const TArray<FLbbLayeredBlendBodyPart>& BodyPartDefinitions)
-	{
-		Reset();
-
-		BodyParts.Reset(BodyPartDefinitions.Num());
-		for (const FLbbLayeredBlendBodyPart& BodyPartDefinition : BodyPartDefinitions)
-		{
-			FBodyPartRuntimeData& RuntimeBodyPart = BodyParts.AddDefaulted_GetRef();
-			RuntimeBodyPart.InitFromDefinition(BodyPartDefinition);
-
-			bNeedsBasePose |= RuntimeBodyPart.NeedsBasePose();
-			bNeedsOverlayPose |= RuntimeBodyPart.NeedsOverlayPose();
-			bNeedsMeshSpaceAdditive |= RuntimeBodyPart.NeedsMeshSpaceAdditive();
-			bNeedsLocalSpaceAdditive |= RuntimeBodyPart.NeedsLocalSpaceAdditive();
-			bNeedsSlotEvaluation |= RuntimeBodyPart.NeedsSlotEvaluation();
-			bHasOutputAffectingOperators |= RuntimeBodyPart.CanAffectOutput();
-		}
-
-		bIsInitialized = true;
-	}
-
-	void FRuntimeData::Reset()
-	{
-		BodyParts.Reset();
-		bIsInitialized = false;
-		bNeedsBasePose = false;
-		bNeedsOverlayPose = false;
-		bNeedsMeshSpaceAdditive = false;
-		bNeedsLocalSpaceAdditive = false;
-		bNeedsSlotEvaluation = false;
-		bHasOutputAffectingOperators = false;
-	}
-
-	void FRuntimeData::BuildBodyBoneBlendWeights(const USkeleton* InSkeleton)
-	{
-		for (FBodyPartRuntimeData& BodyPart : BodyParts)
-		{
-			BodyPart.BuildBodyBoneBlendWeights(InSkeleton);
-		}
-	}
-
-	void FRuntimeData::RebuildDesiredBoneWeights(const FBoneContainer& RequiredBones)
-	{
-		for (FBodyPartRuntimeData& BodyPart : BodyParts)
-		{
-			BodyPart.RebuildDesiredBoneWeights(RequiredBones);
-		}
-	}
-
-	void FRuntimeData::UpdateBlendWeights(const FAnimationUpdateContext& Context)
-	{
-		for (FBodyPartRuntimeData& BodyPart : BodyParts)
-		{
-			BodyPart.UpdateBlendWeights(Context);
-		}
-	}
-
-	void FRuntimeData::UpdateSlotNodeWeights(const FAnimationUpdateContext& Context)
-	{
-		for (FBodyPartRuntimeData& BodyPart : BodyParts)
-		{
-			BodyPart.UpdateSlotNodeWeights(Context);
-		}
-	}
-}
 
 //***********************************************
 //   ULbbLayeredBodyPartBlendAnimNodeLibrary
@@ -282,45 +37,28 @@ void ULbbLayeredBodyPartBlendAnimNodeLibrary::SetBodyPartDefinition(const FLbbAn
 
 namespace
 {
-	static FCompactPose GetAdditivePose(const FCompactPose& Base, FCompactPose Additive, bool bIsMeshSpace)
-	{
-		if (bIsMeshSpace)
-		{
-			FCompactPose BaseMS = Base;
-			FAnimationRuntime::ConvertPoseToMeshRotation(BaseMS);
-			FAnimationRuntime::ConvertPoseToMeshRotation(Additive);
-			FAnimationRuntime::ConvertPoseToAdditive(Additive, BaseMS);
-		}
-		else
-		{
-			FAnimationRuntime::ConvertPoseToAdditive(Additive, Base);
-		}
-		return Additive;
-	}
-	
 	static void MovePoseContextData(FPoseContext& Dest, FPoseContext& Src)
 	{
 		Dest.Pose.MoveBonesFrom(Src.Pose);
 		Dest.Curve.MoveFrom(Src.Curve);
 		Dest.CustomAttributes.MoveFrom(Src.CustomAttributes);
 	}
-	
-	static void ExecuteBodyPartOperators(
-		LbbLayeredBlendBodyPart::FBodyPartRuntimeData& BodyPartRuntimeData,
-		const LbbLayeredBlendBodyPart::FBodyPartExecutionInputs& Inputs,
-		FPoseContext& Output)
+
+	static void ExecuteOperatorProgram(
+		FLbbOperatorProgramRuntimeData& ProgramRuntimeData,
+		const FLbbOperatorExecutionInputs& Inputs,
+		FPoseContext& CurrentPose)
 	{
-		if (!BodyPartRuntimeData.HasOperators())
+		if (!ProgramRuntimeData.HasOperators())
 		{
 			return;
 		}
 
-		LbbLayeredBlendBodyPart::FOperatorExecutionContext ExecutionContext(
-			BodyPartRuntimeData.SlotNodesData,
-			Output,
-			Inputs,
-			BodyPartRuntimeData.NumTemporaryPoses);
-		for (const TUniquePtr<LbbLayeredBlendBodyPart::FCompiledOperator>& Operator : BodyPartRuntimeData.Operators)
+		FLbbOperatorExecutionContext ExecutionContext(
+			ProgramRuntimeData.SlotNodesData,
+			CurrentPose,
+			Inputs);
+		for (const TUniquePtr<FLbbCompiledOperator>& Operator : ProgramRuntimeData.Operators)
 		{
 			Operator->Execute(ExecutionContext);
 		}
@@ -376,17 +114,17 @@ void FLbbAnimNode_LayeredBodyPartBlend::Update_AnyThread(const FAnimationUpdateC
 		UpdateCachedBoneData(Context.AnimInstanceProxy->GetRequiredBones(), Context.AnimInstanceProxy->GetSkeleton());
 		RuntimeData.UpdateBlendWeights(Context);
 
-		if (RuntimeData.NeedsSlotEvaluation())
+		if (RuntimeData.IsNeedsSlotEvaluation())
 		{
 			RuntimeData.UpdateSlotNodeWeights(Context);
 		}
 
-		if (RuntimeData.NeedsOverlayPoseEvaluation())
+		if (RuntimeData.IsNeedsOverlayPoseEvaluation())
 		{
 			OverlayPose.Update(Context.FractionalWeight(1.f));
 		}
 
-		if (RuntimeData.NeedsBasePoseEvaluation() || RuntimeData.NeedsLocalSpaceAdditive() || RuntimeData.NeedsMeshSpaceAdditive())
+		if (RuntimeData.IsNeedsBasePoseEvaluation())
 		{
 			BasePose.Update(Context.FractionalWeight(1.f));
 		}
@@ -412,44 +150,37 @@ void FLbbAnimNode_LayeredBodyPartBlend::Evaluate_AnyThread(FPoseContext& Output)
 	}
 
 	TOptional<FPoseContext> BaseEvalContext;
-	if (RuntimeData.NeedsBasePoseEvaluation() || RuntimeData.NeedsLocalSpaceAdditive() || RuntimeData.NeedsMeshSpaceAdditive())
+	if (RuntimeData.IsNeedsBasePoseEvaluation())
 	{
 		BaseEvalContext.Emplace(Output);
 		BasePose.Evaluate(BaseEvalContext.GetValue());
 	}
 
 	TOptional<FPoseContext> OverlayEvalContext;
-	if (RuntimeData.NeedsOverlayPoseEvaluation())
+	if (RuntimeData.IsNeedsOverlayPoseEvaluation())
 	{
 		OverlayEvalContext.Emplace(Output);
 		OverlayPose.Evaluate(OverlayEvalContext.GetValue());
 	}
 
-	FCompactPose AdditiveDeltaLS;
-	FCompactPose AdditiveDeltaMS;
-	if (RuntimeData.NeedsLocalSpaceAdditive())
-	{
-		check(BaseEvalContext.IsSet());
-		AdditiveDeltaLS = GetAdditivePose(BaseEvalContext->Pose, MotionEvalContext.Pose, false);
-	}
-	if (RuntimeData.NeedsMeshSpaceAdditive())
-	{
-		check(BaseEvalContext.IsSet());
-		AdditiveDeltaMS = GetAdditivePose(BaseEvalContext->Pose, MotionEvalContext.Pose, true);
-	}
+	TArray<TOptional<FPoseContext>, TInlineAllocator<4>> CacheSlots;
+	CacheSlots.SetNum(RuntimeData.GetCacheSlotCount());
 
 	Output = MotionEvalContext;
 
-	const LbbLayeredBlendBodyPart::FBodyPartExecutionInputs ExecutionInputs{
+	const FLbbOperatorExecutionInputs ExecutionInputs{
 		MotionEvalContext,
 		BaseEvalContext.IsSet() ? &BaseEvalContext.GetValue() : nullptr,
 		OverlayEvalContext.IsSet() ? &OverlayEvalContext.GetValue() : nullptr,
-		RuntimeData.NeedsLocalSpaceAdditive() ? &AdditiveDeltaLS : nullptr,
-		RuntimeData.NeedsMeshSpaceAdditive() ? &AdditiveDeltaMS : nullptr};
+		&CacheSlots};
 
-	for (LbbLayeredBlendBodyPart::FBodyPartRuntimeData& BodyPart : RuntimeData.BodyParts)
+	FPoseContext CacheProgramCurrentPose(Output);
+	CacheProgramCurrentPose = MotionEvalContext;
+	ExecuteOperatorProgram(RuntimeData.CacheProgram, ExecutionInputs, CacheProgramCurrentPose);
+
+	for (FLbbOperatorProgramRuntimeData& BodyPart : RuntimeData.BodyParts)
 	{
-		ExecuteBodyPartOperators(BodyPart, ExecutionInputs, Output);
+		ExecuteOperatorProgram(BodyPart, ExecutionInputs, Output);
 	}
 
 	Output.Pose.NormalizeRotations();
@@ -469,7 +200,7 @@ void FLbbAnimNode_LayeredBodyPartBlend::ReinitRuntimeData()
 	RuntimeData.Reset();
 	if (BodyDefinition)
 	{
-		RuntimeData.InitFromDefinition(BodyDefinition->BodyParts);
+		RuntimeData.InitFromDefinition(BodyDefinition->CacheProgram, BodyDefinition->BodyParts);
 	}
 
 	SkeletonGuid.Invalidate();

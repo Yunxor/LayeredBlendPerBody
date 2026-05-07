@@ -4,7 +4,10 @@
 
 #include "CoreMinimal.h"
 #include "EdGraph/EdGraph.h"
+#include "LbbLayeredBlendBodyEditorModel.h"
 #include "LbbLayeredBlendBodyEdGraph.generated.h"
+
+class ULbbLayeredBlendBodyDefinition;
 
 UCLASS()
 class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraph : public UEdGraph
@@ -12,6 +15,12 @@ class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraph : public UEdGrap
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(Transient)
+	TObjectPtr<ULbbLayeredBlendBodyDefinition> EditingDefinition = nullptr;
+
+	UPROPERTY(Transient)
+	ELbbLayeredBlendBodyGraphKind GraphKind = ELbbLayeredBlendBodyGraphKind::BodyPart;
+
 	UPROPERTY(Transient)
 	int32 BodyPartIndex = INDEX_NONE;
 };

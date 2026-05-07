@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "LbbLayeredBlendBodyDefinition.h"
+#include "LbbLayeredBlendBodyRuntime.h"
 #include "LbbLayeredBlendBodyTypes.h"
 #include "Animation/AnimNodeBase.h"
 #include "Animation/AnimNodeReference.h"
@@ -13,89 +14,6 @@
 #else
 #define  ENABLE_LBBANIMATION_DEBUG 0
 #endif
-
-namespace LbbLayeredBlendBodyPart
-{
-	class FOperatorCompileContext;
-
-	struct FBodyPartRuntimeData
-	{
-		TArray<TUniquePtr<FCompiledOperator>> Operators;
-		int32 NumTemporaryPoses = 0;
-		TArray<FSlotNodeData> SlotNodesData;
-
-		FBodyPartRuntimeData();
-		FBodyPartRuntimeData(const FBodyPartRuntimeData&) = delete;
-		FBodyPartRuntimeData& operator=(const FBodyPartRuntimeData&) = delete;
-		FBodyPartRuntimeData(FBodyPartRuntimeData&&) = default;
-		FBodyPartRuntimeData& operator=(FBodyPartRuntimeData&&) = default;
-
-		void Reset();
-		void InitFromDefinition(const FLbbLayeredBlendBodyPart& BodyPartDefinition);
-		void BuildBodyBoneBlendWeights(const USkeleton* InSkeleton);
-		void RebuildDesiredBoneWeights(const FBoneContainer& RequiredBones);
-		void UpdateBlendWeights(const FAnimationUpdateContext& Context);
-		void UpdateSlotNodeWeights(const FAnimationUpdateContext& Context);
-
-		bool HasOperators() const { return !Operators.IsEmpty(); }
-		bool CanAffectOutput() const { return bCanAffectOutput; }
-		bool NeedsBasePose() const { return bNeedsBasePose; }
-		bool NeedsOverlayPose() const { return bNeedsOverlayPose; }
-		bool NeedsMeshSpaceAdditive() const { return bNeedsMeshSpaceAdditive; }
-		bool NeedsLocalSpaceAdditive() const { return bNeedsLocalSpaceAdditive; }
-		bool NeedsSlotEvaluation() const { return bNeedsSlotEvaluation; }
-
-	private:
-		friend class FOperatorCompileContext;
-
-		bool bNeedsBasePose = false;
-		bool bNeedsOverlayPose = false;
-		bool bNeedsMeshSpaceAdditive = false;
-		bool bNeedsLocalSpaceAdditive = false;
-		bool bNeedsSlotEvaluation = false;
-		bool bCanAffectOutput = false;
-	};
-
-	struct FRuntimeData
-	{
-		TArray<FBodyPartRuntimeData> BodyParts; // Index: Body Part.
-
-		FRuntimeData();
-		FRuntimeData(const FRuntimeData&) = delete;
-		FRuntimeData& operator=(const FRuntimeData&) = delete;
-		FRuntimeData(FRuntimeData&&) = default;
-		FRuntimeData& operator=(FRuntimeData&&) = default;
-
-		void InitFromDefinition(const TArray<FLbbLayeredBlendBodyPart>& BodyPartDefinitions);
-
-		bool IsInitialized() const {return bIsInitialized; }
-
-		void Reset();
-
-		void BuildBodyBoneBlendWeights(const USkeleton* InSkeleton);
-		void RebuildDesiredBoneWeights(const FBoneContainer& RequiredBones);
-		void UpdateBlendWeights(const FAnimationUpdateContext& Context);
-		void UpdateSlotNodeWeights(const FAnimationUpdateContext& Context);
-
-		int32 GetBodyPartCount() const { return BodyParts.Num(); }
-		bool HasOutputAffectingOperators() const { return bHasOutputAffectingOperators; }
-		bool NeedsBasePoseEvaluation() const { return bNeedsBasePose; }
-		bool NeedsOverlayPoseEvaluation() const { return bNeedsOverlayPose; }
-		bool NeedsMeshSpaceAdditive() const { return bNeedsMeshSpaceAdditive; }
-		bool NeedsLocalSpaceAdditive() const { return bNeedsLocalSpaceAdditive; }
-		bool NeedsSlotEvaluation() const { return bNeedsSlotEvaluation; }
-
-	private:
-		bool bIsInitialized = false;
-		bool bNeedsBasePose = false;
-		bool bNeedsOverlayPose = false;
-		bool bNeedsMeshSpaceAdditive = false;
-		bool bNeedsLocalSpaceAdditive = false;
-		bool bNeedsSlotEvaluation = false;
-		bool bHasOutputAffectingOperators = false;
-	};
-}
-
 
 USTRUCT(BlueprintType)
 struct FLbbAnimNodeRef_LayeredBodyPartBlend : public FAnimNodeReference
@@ -164,7 +82,7 @@ private:
 	void UpdateCachedBoneData(const FBoneContainer& RequiredBones, const USkeleton* InSkeleton);
 	
 protected:
-	LbbLayeredBlendBodyPart::FRuntimeData RuntimeData;
+	FLbbLayeredBlendBodyRuntimeData RuntimeData;
 
 
 	// Guids for skeleton used to determine whether the PerBoneBlendWeights need rebuilding
