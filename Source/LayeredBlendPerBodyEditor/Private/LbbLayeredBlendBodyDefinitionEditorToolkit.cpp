@@ -11,7 +11,7 @@
 #include "LbbLayeredBlendBodyDefinition.h"
 #include "LbbLayeredBlendBodyBodyPartDetailsObject.h"
 #include "LbbLayeredBlendBodyEdGraph.h"
-#include "LbbLayeredBlendBodyEdGraphNode.h"
+#include "GraphNodes/LbbLayeredBlendBodyEdGraphNode.h"
 #include "LbbLayeredBlendBodyGraphCompiler.h"
 #include "LbbLayeredBlendBodyGraphNodeRegistry.h"
 #include "LbbLayeredBlendBodyGraphSchema.h"

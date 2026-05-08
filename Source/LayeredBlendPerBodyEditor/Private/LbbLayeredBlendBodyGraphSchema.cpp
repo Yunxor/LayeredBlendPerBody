@@ -3,7 +3,7 @@
 #include "LbbLayeredBlendBodyGraphSchema.h"
 
 #include "LbbLayeredBlendBodyEdGraph.h"
-#include "LbbLayeredBlendBodyEdGraphNode.h"
+#include "GraphNodes/LbbLayeredBlendBodyEdGraphNode.h"
 #include "LbbLayeredBlendBodyGraphNodeRegistry.h"
 #include "ScopedTransaction.h"
 
