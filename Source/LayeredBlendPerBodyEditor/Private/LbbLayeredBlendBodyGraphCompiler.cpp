@@ -933,7 +933,7 @@ namespace
 		AddLink(OutGraphModel, InputGuid, PinPose, ResultGuid, PinPose);
 	}
 
-FLbbCompileResult FLbbLayeredBlendBodyGraphCompiler::Compile(ULbbLayeredBlendBodyDefinition& Definition)
+FLbbCompileResult FLbbLayeredBlendBodyGraphCompiler::Compile(const ULbbLayeredBlendBodyDefinition& Definition)
 	{
 		FLbbCompileResult Result;
 		Result.bSuccess = false;
@@ -992,11 +992,19 @@ FLbbCompileResult FLbbLayeredBlendBodyGraphCompiler::Compile(ULbbLayeredBlendBod
 
 		if (Result.bSuccess)
 		{
-			Definition.CacheProgram.NamedCacheNames = MoveTemp(CompiledCacheGraph.NamedCacheNames);
-			Definition.CacheProgram.Operators = MoveTemp(CompiledCacheGraph.Operators);
-			Definition.BodyParts = MoveTemp(CompiledBodyParts);
+			Result.CompiledDefinition.CacheProgram.NamedCacheNames = MoveTemp(CompiledCacheGraph.NamedCacheNames);
+			Result.CompiledDefinition.CacheProgram.Operators = MoveTemp(CompiledCacheGraph.Operators);
+			Result.CompiledDefinition.BodyParts = MoveTemp(CompiledBodyParts);
 		}
 
 		return Result;
 #endif
 	}
+
+void FLbbLayeredBlendBodyGraphCompiler::ApplyCompiledDefinition(
+	const FLbbCompiledDefinitionData& CompiledDefinition,
+	ULbbLayeredBlendBodyDefinition& Definition)
+{
+	Definition.CacheProgram = CompiledDefinition.CacheProgram;
+	Definition.BodyParts = CompiledDefinition.BodyParts;
+}

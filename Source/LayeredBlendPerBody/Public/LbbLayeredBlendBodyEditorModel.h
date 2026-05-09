@@ -20,6 +20,19 @@ struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphNodeModel
 
 	UPROPERTY(EditAnywhere, meta = (BaseStruct = "/Script/LayeredBlendPerBody.LbbLayeredBlendBodyGraphNodeDataBase", ExcludeBaseStruct))
 	FInstancedStruct NodeData;
+	
+	
+	inline bool operator==(const FLbbLayeredBlendBodyGraphNodeModel& Other) const
+	{
+		return NodeGuid == Other.NodeGuid
+			&& NodePosition.Equals(Other.NodePosition, KINDA_SMALL_NUMBER)
+			&& NodeData == Other.NodeData;
+	}
+	
+	inline bool operator!=(const FLbbLayeredBlendBodyGraphNodeModel& Other) const
+	{
+		return !(*this == Other);
+	}
 };
 
 USTRUCT()
@@ -38,6 +51,20 @@ struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyGraphLinkModel
 
 	UPROPERTY()
 	FName ToPinName = NAME_None;
+	
+	
+	inline bool operator==(const FLbbLayeredBlendBodyGraphLinkModel& Other) const
+	{
+		return FromNodeGuid == Other.FromNodeGuid
+			&& FromPinName == Other.FromPinName
+			&& ToNodeGuid == Other.ToNodeGuid
+			&& ToPinName == Other.ToPinName;
+	}
+	
+	inline bool operator!=(const FLbbLayeredBlendBodyGraphLinkModel& Other) const
+	{
+		return !(*this == Other);
+	}
 };
 
 USTRUCT()

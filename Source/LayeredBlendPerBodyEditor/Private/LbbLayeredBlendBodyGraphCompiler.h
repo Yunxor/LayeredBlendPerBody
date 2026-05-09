@@ -4,10 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Logging/TokenizedMessage.h"
-#include "LbbLayeredBlendBodyEditorModel.h"
-
-class ULbbLayeredBlendBodyDefinition;
-struct FLbbLayeredBlendBodyPartGraphModel;
+#include "LbbLayeredBlendBodyDefinition.h"
 
 struct FLbbCompileMessage
 {
@@ -18,10 +15,17 @@ struct FLbbCompileMessage
 	FString Message;
 };
 
+struct FLbbCompiledDefinitionData
+{
+	FLbbLayeredBlendBodyCacheProgram CacheProgram;
+	TArray<FLbbLayeredBlendBodyPart> BodyParts;
+};
+
 struct FLbbCompileResult
 {
 	bool bSuccess = false;
 	TArray<FLbbCompileMessage> Messages;
+	FLbbCompiledDefinitionData CompiledDefinition;
 };
 
 class FLbbLayeredBlendBodyGraphCompiler
@@ -29,5 +33,6 @@ class FLbbLayeredBlendBodyGraphCompiler
 public:
 	static void CreateDefaultCacheGraph(FLbbLayeredBlendBodyCacheGraphModel& OutGraphModel);
 	static void CreateDefaultBodyPartGraph(FLbbLayeredBlendBodyPartGraphModel& OutGraphModel, const FName& PartName);
-	static FLbbCompileResult Compile(ULbbLayeredBlendBodyDefinition& Definition);
+	static FLbbCompileResult Compile(const ULbbLayeredBlendBodyDefinition& Definition);
+	static void ApplyCompiledDefinition(const FLbbCompiledDefinitionData& CompiledDefinition, ULbbLayeredBlendBodyDefinition& Definition);
 };

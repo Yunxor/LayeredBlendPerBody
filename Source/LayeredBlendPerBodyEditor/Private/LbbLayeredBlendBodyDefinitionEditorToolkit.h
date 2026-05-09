@@ -133,8 +133,10 @@ private:
 	FBodyPartCompileSummary CacheGraphCompileSummary;
 	TArray<FBodyPartCompileSummary> BodyPartCompileSummaries;
 	TArray<TSharedPtr<FCompileMessageListItem>> CompileMessageItems;
+	FLbbCompiledDefinitionData CompiledDefinitionPreview;
 	FDelegateHandle CurrentGraphChangedHandle;
 	ELbbLayeredBlendBodyGraphKind CurrentGraphKind = ELbbLayeredBlendBodyGraphKind::Cache;
 	int32 CurrentBodyPartIndex = INDEX_NONE;
+	bool bHasCompiledDefinitionPreview = false;
 	bool bIsSynchronizing = false;
 };
