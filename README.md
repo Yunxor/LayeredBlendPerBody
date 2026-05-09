@@ -3,7 +3,7 @@
 `LayeredBlendPerBody` 是一套面向 Unreal Engine 动画蓝图的“按身体部位分层混合”插件。它提供了：
 
 - 运行时动画节点 `Layered blend per body part`
-- 可持久化的配置资产 `ULbbLayeredBlendBodyDefinition`
+- 可持久化的配置资产 `ULbbDefinition`
 - 专用图形化编辑器，用于编辑 `Cache Graph` 和多个 `BodyPart Graph`
 
 这套系统的定位不是再做一套通用 ABP，也不是运行时解释执行图，而是：
@@ -125,7 +125,7 @@
 
 对应类：
 
-- `ULbbLayeredBlendBodyDefinition`
+- `ULbbDefinition`
 
 资产打开后会进入专用编辑器，而不是默认 Data Asset 详情面板。
 
@@ -293,15 +293,15 @@
 
 在：
 
-- `Source/LayeredBlendPerBody/Public/LbbLayeredBlendBodyGraphNodeData.h`
+- `Source/LayeredBlendPerBody/Public/LbbGraphNodeData.h`
 
-新增一个 `FLbbLayeredBlendBodyGraphNodeData_*` 结构，只保存作者真正需要编辑的参数，不要把运行时内部数据塞进来。
+新增一个 `FLbbGraphNodeData_*` 结构，只保存作者真正需要编辑的参数，不要把运行时内部数据塞进来。
 
 已有做法可以参考：
 
-- `FLbbLayeredBlendBodyGraphNodeData_Blend`
-- `FLbbLayeredBlendBodyGraphNodeData_SavePose`
-- `FLbbLayeredBlendBodyGraphNodeData_ApplyAdditive`
+- `FLbbGraphNodeData_Blend`
+- `FLbbGraphNodeData_SavePose`
+- `FLbbGraphNodeData_ApplyAdditive`
 
 #### 第二步：新增 Editor 节点类
 
@@ -312,8 +312,8 @@
 
 新增一对文件：
 
-- `LbbLayeredBlendBodyEdGraphNode_YourNode.h`
-- `LbbLayeredBlendBodyEdGraphNode_YourNode.cpp`
+- `LbbEdGraphNode_YourNode.h`
+- `LbbEdGraphNode_YourNode.cpp`
 
 最少要实现这些内容：
 
@@ -349,7 +349,7 @@
 
 也就是说：
 
-- 只要你的节点类继承自 `ULbbLayeredBlendBodyEdGraphNode`
+- 只要你的节点类继承自 `ULbbEdGraphNode`
 - 是原生类
 - 不是抽象类 / 废弃类
 - `BuildGraphNodeDescriptor()` 返回有效 descriptor
@@ -369,9 +369,9 @@
 
 在：
 
-- `Source/LayeredBlendPerBody/Public/LbbLayeredBlendBodyOperators.h`
+- `Source/LayeredBlendPerBody/Public/LbbOperators.h`
 
-新增一个 `FLbbLayeredBlendBodyPartOperator_*` 结构。
+新增一个 `FLbbPartOperator_*` 结构。
 
 这个结构负责持久化编译结果，常见字段包括：
 
@@ -383,7 +383,7 @@
 
 在：
 
-- `Source/LayeredBlendPerBody/Private/LbbLayeredBlendBodyOperators.cpp`
+- `Source/LayeredBlendPerBody/Private/LbbOperators.cpp`
 
 新增对应的 `FLbbCompiledOperator` 实现，并补齐：
 
@@ -412,11 +412,11 @@
 
 如果要给 `Input` 新增新的 `PoseSourceType`，通常要同步修改：
 
-- `Source/LayeredBlendPerBody/Public/LbbLayeredBlendBodyTypes.h`
-- `Source/LayeredBlendPerBody/Private/LbbLayeredBlendBodyExecutionContext.cpp`
-- `Source/LayeredBlendPerBody/Private/LbbLayeredBlendBodyRuntime.cpp`
-- `Source/LayeredBlendPerBodyEditor/Private/GraphNodes/LbbLayeredBlendBodyEdGraphNode_Input.cpp`
-- `Source/LayeredBlendPerBodyEditor/Private/LbbLayeredBlendBodyGraphCompiler.cpp`
+- `Source/LayeredBlendPerBody/Public/LbbTypes.h`
+- `Source/LayeredBlendPerBody/Private/LbbExecutionContext.cpp`
+- `Source/LayeredBlendPerBody/Private/LbbRuntime.cpp`
+- `Source/LayeredBlendPerBodyEditor/Private/GraphNodes/LbbEdGraphNode_Input.cpp`
+- `Source/LayeredBlendPerBodyEditor/Private/LbbGraphCompiler.cpp`
 
 注意判断这个来源是否：
 
@@ -430,7 +430,7 @@
 
 图到运行时的主要编译入口在：
 
-- `Source/LayeredBlendPerBodyEditor/Private/LbbLayeredBlendBodyGraphCompiler.cpp`
+- `Source/LayeredBlendPerBodyEditor/Private/LbbGraphCompiler.cpp`
 
 这里负责：
 
@@ -467,7 +467,7 @@
 
 更细的实现文档见：
 
-- [Doc/LbbLayeredBlendBody_CacheGraph_ImplementationOrder.md](Doc/LbbLayeredBlendBody_CacheGraph_ImplementationOrder.md)
+- [Doc/Lbb_CacheGraph_ImplementationOrder.md](Doc/Lbb_CacheGraph_ImplementationOrder.md)
 - [Doc/UNwLayeredBlendBodyDefinition_GraphEditor_Spec.md](Doc/UNwLayeredBlendBodyDefinition_GraphEditor_Spec.md)
 - [Doc/FNwAnimNode_LayeredBodyPartBlend_Optimization.md](Doc/FNwAnimNode_LayeredBodyPartBlend_Optimization.md)
 

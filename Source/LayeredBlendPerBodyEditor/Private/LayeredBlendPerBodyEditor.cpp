@@ -1,9 +1,9 @@
 #include "LayeredBlendPerBodyEditor.h"
 
-#include "GraphNodes/LbbLayeredBlendBodyEdGraphNode.h"
-#include "GraphNodes/LbbLayeredBlendBodyEdGraphNode_Input.h"
-#include "GraphNodes/LbbLayeredBlendBodyEdGraphNode_InputDetails.h"
-#include "LbbLayeredBlendBodyGraphNodeRegistry.h"
+#include "GraphNodes/LbbEdGraphNode.h"
+#include "GraphNodes/LbbEdGraphNode_Input.h"
+#include "GraphNodes/LbbEdGraphNode_InputDetails.h"
+#include "LbbGraphNodeRegistry.h"
 #include "Modules/ModuleManager.h"
 #include "PropertyEditorModule.h"
 #include "UObject/UObjectHash.h"
@@ -12,10 +12,10 @@
 
 namespace
 {
-	void RegisterAllLbbLayeredBlendBodyGraphNodes()
+	void RegisterAllLbbGraphNodes()
 	{
 		TArray<UClass*> NodeClasses;
-		GetDerivedClasses(ULbbLayeredBlendBodyEdGraphNode::StaticClass(), NodeClasses, true);
+		GetDerivedClasses(ULbbEdGraphNode::StaticClass(), NodeClasses, true);
 
 		NodeClasses.Sort([](const UClass& Left, const UClass& Right)
 		{
@@ -36,32 +36,32 @@ namespace
 				continue;
 			}
 
-			const ULbbLayeredBlendBodyEdGraphNode* NodeCDO = NodeClass->GetDefaultObject<ULbbLayeredBlendBodyEdGraphNode>();
+			const ULbbEdGraphNode* NodeCDO = NodeClass->GetDefaultObject<ULbbEdGraphNode>();
 			if (NodeCDO == nullptr)
 			{
 				continue;
 			}
 
-			const FLbbLayeredBlendBodyGraphNodeDescriptor Descriptor = NodeCDO->BuildGraphNodeDescriptor();
+			const FLbbGraphNodeDescriptor Descriptor = NodeCDO->BuildGraphNodeDescriptor();
 			if (Descriptor.NodeDataStruct == nullptr || Descriptor.NodeClass == nullptr)
 			{
 				continue;
 			}
 
-			RegisterLbbLayeredBlendBodyGraphNode(Descriptor);
+			RegisterLbbGraphNode(Descriptor);
 		}
 	}
 }
 
 void FLayeredBlendPerBodyEditorModule::StartupModule()
 {
-	ResetLbbLayeredBlendBodyGraphNodeRegistry();
-	RegisterAllLbbLayeredBlendBodyGraphNodes();
+	ResetLbbGraphNodeRegistry();
+	RegisterAllLbbGraphNodes();
 
 	FPropertyEditorModule& PropertyEditorModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
 	PropertyEditorModule.RegisterCustomClassLayout(
-		ULbbLayeredBlendBodyEdGraphNode_Input::StaticClass()->GetFName(),
-		FOnGetDetailCustomizationInstance::CreateStatic(&FLbbLayeredBlendBodyEdGraphNodeInputDetails::MakeInstance));
+		ULbbEdGraphNode_Input::StaticClass()->GetFName(),
+		FOnGetDetailCustomizationInstance::CreateStatic(&FLbbEdGraphNodeInputDetails::MakeInstance));
 	PropertyEditorModule.NotifyCustomizationModuleChanged();
 }
 
@@ -70,11 +70,11 @@ void FLayeredBlendPerBodyEditorModule::ShutdownModule()
 	if (FModuleManager::Get().IsModuleLoaded("PropertyEditor"))
 	{
 		FPropertyEditorModule& PropertyEditorModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
-		PropertyEditorModule.UnregisterCustomClassLayout(ULbbLayeredBlendBodyEdGraphNode_Input::StaticClass()->GetFName());
+		PropertyEditorModule.UnregisterCustomClassLayout(ULbbEdGraphNode_Input::StaticClass()->GetFName());
 		PropertyEditorModule.NotifyCustomizationModuleChanged();
 	}
 
-	ResetLbbLayeredBlendBodyGraphNodeRegistry();
+	ResetLbbGraphNodeRegistry();
 }
 
 #undef LOCTEXT_NAMESPACE
