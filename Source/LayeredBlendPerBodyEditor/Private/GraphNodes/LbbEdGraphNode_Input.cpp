@@ -44,6 +44,7 @@ void ULbbEdGraphNode_Input::SetSourcePose(const FLbbLayeredBodyPartPoseSource& I
 	SourceType = InSourcePose.Type;
 	CachePoseName = InSourcePose.CachePoseName;
 	InputPoseName = InSourcePose.InputPoseName;
+
 	SanitizeSourceSelection();
 }
 
@@ -57,13 +58,11 @@ bool ULbbEdGraphNode_Input::IsSourceTypeAllowedInCurrentGraph(const ELbbLayeredB
 
 	if (OwningGraph->GraphKind == ELbbGraphKind::Cache)
 	{
-		return InSourceType == ELbbLayeredBodyPartPoseSourceType::BasePose
-			|| InSourceType == ELbbLayeredBodyPartPoseSourceType::InputPose
+		return InSourceType == ELbbLayeredBodyPartPoseSourceType::InputPose
 			|| InSourceType == ELbbLayeredBodyPartPoseSourceType::CurrentPose;
 	}
 
-	return InSourceType == ELbbLayeredBodyPartPoseSourceType::BasePose
-		|| InSourceType == ELbbLayeredBodyPartPoseSourceType::InputPose
+	return InSourceType == ELbbLayeredBodyPartPoseSourceType::InputPose
 		|| InSourceType == ELbbLayeredBodyPartPoseSourceType::CachePose
 		|| InSourceType == ELbbLayeredBodyPartPoseSourceType::CurrentPose;
 }
@@ -72,9 +71,8 @@ TArray<ELbbLayeredBodyPartPoseSourceType> ULbbEdGraphNode_Input::GetAvailableSou
 {
 	TArray<ELbbLayeredBodyPartPoseSourceType> Result;
 	static const ELbbLayeredBodyPartPoseSourceType SourceTypeOptions[] = {
-		ELbbLayeredBodyPartPoseSourceType::BasePose,
-		ELbbLayeredBodyPartPoseSourceType::CachePose,
 		ELbbLayeredBodyPartPoseSourceType::InputPose,
+		ELbbLayeredBodyPartPoseSourceType::CachePose,
 	};
 
 	for (const ELbbLayeredBodyPartPoseSourceType SourceTypeOption : SourceTypeOptions)
@@ -128,7 +126,8 @@ void ULbbEdGraphNode_Input::SanitizeSourceSelection()
 {
 	if (!IsSourceTypeAllowedInCurrentGraph(SourceType))
 	{
-		SourceType = ELbbLayeredBodyPartPoseSourceType::BasePose;
+		SourceType = ELbbLayeredBodyPartPoseSourceType::InputPose;
+		InputPoseName = Lbb::GetBasePoseInputName();
 	}
 
 	if (SourceType != ELbbLayeredBodyPartPoseSourceType::InputPose)
@@ -157,6 +156,7 @@ void ULbbEdGraphNode_Input::SanitizeSourceSelection()
 TArray<FString> ULbbEdGraphNode_Input::GetAvailableInputPoseOptions() const
 {
 	TArray<FString> Result;
+	Result.Add(Lbb::GetBasePoseInputName().ToString());
 
 	const ULbbBodyPartDefinitionDataAsset* Definition = GetOwningDefinition();
 	if (Definition == nullptr)
@@ -165,6 +165,7 @@ TArray<FString> ULbbEdGraphNode_Input::GetAvailableInputPoseOptions() const
 	}
 
 	TSet<FName> UniqueNames;
+	UniqueNames.Add(Lbb::GetBasePoseInputName());
 	for (const FLbbInputPoseDefinition& InputDefinition : Definition->InputPoseDefinitions)
 	{
 		if (InputDefinition.InputName.IsNone() || UniqueNames.Contains(InputDefinition.InputName))

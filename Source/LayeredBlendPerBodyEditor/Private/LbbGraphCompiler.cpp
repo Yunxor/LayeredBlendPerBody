@@ -204,6 +204,7 @@ namespace
 			TSet<FName>& OutValidInputPoseNames,
 			TArray<FLbbCompileMessage>& OutMessages)
 		{
+			OutValidInputPoseNames.Add(Lbb::GetBasePoseInputName());
 			TSet<FName> SeenNames;
 			for (const FLbbInputPoseDefinition& InputDefinition : Definition.InputPoseDefinitions)
 			{
@@ -216,18 +217,6 @@ namespace
 						INDEX_NONE,
 						FGuid(),
 						TEXT("Input definition requires a valid InputName."));
-					continue;
-				}
-
-				if (Lbb::IsBuiltInInputName(InputDefinition.InputName))
-				{
-					AddMessage(
-						OutMessages,
-						EMessageSeverity::Error,
-						ELbbGraphKind::Cache,
-						INDEX_NONE,
-						FGuid(),
-						TEXT("InputName 'BasePose' is reserved."));
 					continue;
 				}
 
@@ -608,15 +597,16 @@ namespace
 					return false;
 				}
 
-				if (NodeData->SourcePose.Type == ELbbLayeredBodyPartPoseSourceType::CachePose)
+				FLbbLayeredBodyPartPoseSource SourcePose = NodeData->SourcePose;
+				if (SourcePose.Type == ELbbLayeredBodyPartPoseSourceType::CachePose)
 				{
-					if (NodeData->SourcePose.CachePoseName.IsNone())
+					if (SourcePose.CachePoseName.IsNone())
 					{
 						AddMessage(OutMessages, EMessageSeverity::Error, GraphKind, BodyPartIndex, SourceNodeGuid, TEXT("Input(CachePose) requires a valid CachePoseName."));
 						return false;
 					}
 
-					if (!ValidNamedCaches.Contains(NodeData->SourcePose.CachePoseName))
+					if (!ValidNamedCaches.Contains(SourcePose.CachePoseName))
 					{
 						AddMessage(
 							OutMessages,
@@ -624,19 +614,19 @@ namespace
 							GraphKind,
 							BodyPartIndex,
 							SourceNodeGuid,
-							FString::Printf(TEXT("CachePose '%s' does not exist in Cache Graph."), *NodeData->SourcePose.CachePoseName.ToString()));
+							FString::Printf(TEXT("CachePose '%s' does not exist in Cache Graph."), *SourcePose.CachePoseName.ToString()));
 						return false;
 					}
 				}
-				else if (NodeData->SourcePose.Type == ELbbLayeredBodyPartPoseSourceType::InputPose)
+				else if (SourcePose.Type == ELbbLayeredBodyPartPoseSourceType::InputPose)
 				{
-					if (NodeData->SourcePose.InputPoseName.IsNone())
+					if (SourcePose.InputPoseName.IsNone())
 					{
 						AddMessage(OutMessages, EMessageSeverity::Error, GraphKind, BodyPartIndex, SourceNodeGuid, TEXT("Input(InputPose) requires a valid InputPoseName."));
 						return false;
 					}
 
-					if (!ValidInputPoseNames.Contains(NodeData->SourcePose.InputPoseName))
+					if (!ValidInputPoseNames.Contains(SourcePose.InputPoseName))
 					{
 						AddMessage(
 							OutMessages,
@@ -644,12 +634,12 @@ namespace
 							GraphKind,
 							BodyPartIndex,
 							SourceNodeGuid,
-							FString::Printf(TEXT("InputPose '%s' does not exist in Definition.InputDefinitions."), *NodeData->SourcePose.InputPoseName.ToString()));
+							FString::Printf(TEXT("InputPose '%s' does not exist in Definition.InputPoseDefinitions."), *SourcePose.InputPoseName.ToString()));
 						return false;
 					}
 				}
 
-				OutSourcePose = NodeData->SourcePose;
+				OutSourcePose = SourcePose;
 				return true;
 			}
 
@@ -996,7 +986,8 @@ namespace
 			FVector2D(0.f, 120.f),
 			[](FLbbGraphNodeData_Input& NodeData)
 			{
-				NodeData.SourcePose.Type = ELbbLayeredBodyPartPoseSourceType::BasePose;
+				NodeData.SourcePose.Type = ELbbLayeredBodyPartPoseSourceType::InputPose;
+				NodeData.SourcePose.InputPoseName = Lbb::GetBasePoseInputName();
 			});
 		const FGuid ResultGuid = AddNode<FLbbGraphNodeData_Result>(
 			OutGraphModel,

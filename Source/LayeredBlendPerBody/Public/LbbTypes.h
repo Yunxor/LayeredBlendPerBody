@@ -137,18 +137,54 @@ namespace Lbb
 		return BasePoseInputName;
 	}
 
-	inline bool IsBuiltInInputName(const FName InputName)
+	inline bool IsBasePoseInputName(const FName InputName)
 	{
 		return InputName == GetBasePoseInputName();
+	}
+
+	inline void NormalizeInputPoseDefinitions(TArray<FLbbInputPoseDefinition>& InOutDefinitions)
+	{
+		bool bFoundBasePoseDefinition = false;
+		for (int32 DefinitionIndex = InOutDefinitions.Num() - 1; DefinitionIndex >= 0; --DefinitionIndex)
+		{
+			if (!IsBasePoseInputName(InOutDefinitions[DefinitionIndex].InputName))
+			{
+				continue;
+			}
+
+			if (!bFoundBasePoseDefinition)
+			{
+				bFoundBasePoseDefinition = true;
+				continue;
+			}
+
+			InOutDefinitions.RemoveAt(DefinitionIndex);
+		}
+
+		const int32 BasePoseDefinitionIndex = InOutDefinitions.IndexOfByPredicate([](const FLbbInputPoseDefinition& Definition)
+		{
+			return IsBasePoseInputName(Definition.InputName);
+		});
+
+		if (BasePoseDefinitionIndex == INDEX_NONE)
+		{
+			InOutDefinitions.InsertDefaulted(0, 1);
+			InOutDefinitions[0].InputName = GetBasePoseInputName();
+			return;
+		}
+
+		if (BasePoseDefinitionIndex != 0)
+		{
+			const FLbbInputPoseDefinition BasePoseDefinition = InOutDefinitions[BasePoseDefinitionIndex];
+			InOutDefinitions.RemoveAt(BasePoseDefinitionIndex);
+			InOutDefinitions.Insert(BasePoseDefinition, 0);
+		}
 	}
 }
 
 UENUM(BlueprintType)
 enum class ELbbLayeredBodyPartPoseSourceType : uint8
 {
-	Motion UMETA(Hidden),
-	BasePose,
-	OverlayPose UMETA(Hidden),
 	CurrentPose UMETA(Hidden),
 	CachePose,
 	InputPose,

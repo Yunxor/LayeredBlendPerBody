@@ -50,12 +50,6 @@ namespace LbbEdGraphNodeUtils
 	{
 		switch (SourcePose.Type)
 		{
-		case ELbbLayeredBodyPartPoseSourceType::Motion:
-			return TEXT("Motion");
-		case ELbbLayeredBodyPartPoseSourceType::BasePose:
-			return TEXT("Base Pose");
-		case ELbbLayeredBodyPartPoseSourceType::OverlayPose:
-			return TEXT("Overlay Pose");
 		case ELbbLayeredBodyPartPoseSourceType::CurrentPose:
 			return TEXT("Current Pose");
 		case ELbbLayeredBodyPartPoseSourceType::CachePose:

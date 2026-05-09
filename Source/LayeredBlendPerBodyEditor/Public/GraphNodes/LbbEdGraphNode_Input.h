@@ -20,10 +20,10 @@ class LAYEREDBLENDPERBODYEDITOR_API ULbbEdGraphNode_Input : public ULbbEdGraphNo
 
 public:
 	UPROPERTY(EditAnywhere, Category = "Node")
-	ELbbLayeredBodyPartPoseSourceType SourceType = ELbbLayeredBodyPartPoseSourceType::BasePose;
+	ELbbLayeredBodyPartPoseSourceType SourceType = ELbbLayeredBodyPartPoseSourceType::InputPose;
 
 	UPROPERTY(EditAnywhere, Category = "Node", meta = (EditCondition = "SourceType == ELbbLayeredBodyPartPoseSourceType::InputPose", EditConditionHides, GetOptions = "GetAvailableInputPoseOptions"))
-	FName InputPoseName = NAME_None;
+	FName InputPoseName = TEXT("BasePose");
 
 	UPROPERTY(EditAnywhere, Category = "Node", meta = (EditCondition = "SourceType == ELbbLayeredBodyPartPoseSourceType::CachePose", EditConditionHides, GetOptions = "GetAvailableCachePoseOptions"))
 	FName CachePoseName = NAME_None;

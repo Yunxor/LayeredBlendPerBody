@@ -97,7 +97,7 @@ void ULbbAnimGraphNode_LayeredBlendBodyPart::ValidateAnimNodeDuringCompilation(U
 			continue;
 		}
 
-		if (Lbb::IsBuiltInInputName(PoseAlias))
+		if (Lbb::IsBasePoseInputName(PoseAlias))
 		{
 			MessageLog.Error(TEXT("@@ uses reserved Input Pose alias 'BasePose'."), this);
 			continue;
@@ -116,6 +116,11 @@ void ULbbAnimGraphNode_LayeredBlendBodyPart::ValidateAnimNodeDuringCompilation(U
 	{
 		for (const FLbbInputPoseDefinition& InputDefinition : BodyDefinition->InputPoseDefinitions)
 		{
+			if (Lbb::IsBasePoseInputName(InputDefinition.InputName))
+			{
+				continue;
+			}
+
 			if (!InputDefinition.InputName.IsNone() && !SeenAliases.Contains(InputDefinition.InputName))
 			{
 				MessageLog.Warning(

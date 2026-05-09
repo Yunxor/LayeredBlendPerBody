@@ -1087,13 +1087,16 @@ void FLbbDefinitionEditorToolkit::SyncInputDefinitionsToModel()
 		return;
 	}
 
-	if (AreInputDefinitionsEqual(Definition->InputPoseDefinitions, InputListDetailsObject->CustomInputDefinitions))
+	TArray<FLbbInputPoseDefinition> NormalizedInputDefinitions = InputListDetailsObject->InputDefinitions;
+	Lbb::NormalizeInputPoseDefinitions(NormalizedInputDefinitions);
+
+	if (AreInputDefinitionsEqual(Definition->InputPoseDefinitions, NormalizedInputDefinitions))
 	{
 		return;
 	}
 
 	Definition->Modify();
-	Definition->InputPoseDefinitions = InputListDetailsObject->CustomInputDefinitions;
+	Definition->InputPoseDefinitions = MoveTemp(NormalizedInputDefinitions);
 	Definition->MarkPackageDirty();
 }
 
@@ -1133,9 +1136,8 @@ void FLbbDefinitionEditorToolkit::RefreshInputDetailsObject()
 	const ULbbBodyPartDefinitionDataAsset* Definition = EditingDefinition.Get();
 	if (Definition == nullptr)
 	{
-		InputListDetailsObject->BuiltInInputNames.Reset();
-		InputListDetailsObject->BuiltInInputNames.Add(Lbb::GetBasePoseInputName());
-		InputListDetailsObject->CustomInputDefinitions.Reset();
+		InputListDetailsObject->InputDefinitions.Reset();
+		Lbb::NormalizeInputPoseDefinitions(InputListDetailsObject->InputDefinitions);
 		if (InputDetailsView.IsValid())
 		{
 			InputDetailsView->SetObject(InputListDetailsObject.Get());
@@ -1143,9 +1145,8 @@ void FLbbDefinitionEditorToolkit::RefreshInputDetailsObject()
 		return;
 	}
 
-	InputListDetailsObject->BuiltInInputNames.Reset();
-	InputListDetailsObject->BuiltInInputNames.Add(Lbb::GetBasePoseInputName());
-	InputListDetailsObject->CustomInputDefinitions = Definition->InputPoseDefinitions;
+	InputListDetailsObject->InputDefinitions = Definition->InputPoseDefinitions;
+	Lbb::NormalizeInputPoseDefinitions(InputListDetailsObject->InputDefinitions);
 
 	if (InputDetailsView.IsValid())
 	{

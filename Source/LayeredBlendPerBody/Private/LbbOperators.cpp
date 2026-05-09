@@ -12,12 +12,6 @@ namespace
 	{
 		switch (Source.Type)
 		{
-		case ELbbLayeredBodyPartPoseSourceType::Motion:
-			return TEXT("Motion");
-		case ELbbLayeredBodyPartPoseSourceType::BasePose:
-			return TEXT("Base Pose");
-		case ELbbLayeredBodyPartPoseSourceType::OverlayPose:
-			return TEXT("Overlay Pose");
 		case ELbbLayeredBodyPartPoseSourceType::CurrentPose:
 			return TEXT("Current Pose");
 		case ELbbLayeredBodyPartPoseSourceType::CachePose:
@@ -352,12 +346,6 @@ void FLbbCompiledOperator::AccumulateCommonRequirements(
 
 		switch (Source->Kind)
 		{
-		case ELbbCompiledPoseSourceKind::BasePose:
-			Requirements.bNeedsBasePose = true;
-			break;
-		case ELbbCompiledPoseSourceKind::OverlayPose:
-			Requirements.bNeedsOverlayPose = true;
-			break;
 		case ELbbCompiledPoseSourceKind::InputPose:
 			if (!Source->PoseName.IsNone())
 			{

@@ -31,18 +31,14 @@ struct FLbbOperatorProgramRuntimeData
 	void AddCompiledOperatorToProgram(TUniquePtr<FLbbCompiledOperator>&& Operator);
 	void CompileOperatorProgram(
 		const TArray<FInstancedStruct>& OperatorDefinitions,
-		TMap<FName, int32>& CacheSlotIndexMap,
-		TArray<FName>& CacheSlotNames);
+		TMap<FName, int32>& CachedPoseIndexMap,
+		TArray<FName>& CachedPoseNames);
 	
 	bool HasOperators() const { return !Operators.IsEmpty(); }
 	bool CanAffectCurrentPose() const { return bCanAffectCurrentPose; }
-	bool IsNeedsBasePose() const { return bNeedsBasePose; }
-	bool IsNeedsOverlayPose() const { return bNeedsOverlayPose; }
 	bool IsNeedsSlotEvaluation() const { return bNeedsSlotEvaluation; }
 	bool UsesInputPose(FName PoseName) const { return UsedInputPoseNames.Contains(PoseName); }
 
-	bool bNeedsBasePose = false;
-	bool bNeedsOverlayPose = false;
 	bool bNeedsSlotEvaluation = false;
 	bool bCanAffectCurrentPose = false;
 };
@@ -52,7 +48,7 @@ struct FLbbRuntimeData
 {
 	FLbbOperatorProgramRuntimeData CacheProgram;
 	TArray<FLbbOperatorProgramRuntimeData> BodyParts;
-	TArray<FName> CacheSlotNames;
+	TArray<FName> CachedPoseNames;
 	TSet<FName> UsedInputPoseNames;
 
 	FLbbRuntimeData();
@@ -76,17 +72,13 @@ struct FLbbRuntimeData
 
 	int32 GetBodyPartCount() const { return BodyParts.Num(); }
 	bool HasOutputAffectingOperators() const { return bHasOutputAffectingOperators; }
-	bool IsNeedsBasePoseEvaluation() const { return bNeedsBasePose; }
-	bool IsNeedsOverlayPoseEvaluation() const { return bNeedsOverlayPose; }
 	bool IsNeedsSlotEvaluation() const { return bNeedsSlotEvaluation; }
-	int32 GetCacheSlotCount() const { return CacheSlotNames.Num(); }
+	int32 GetCachedPoseCount() const { return CachedPoseNames.Num(); }
 	bool HasInputPoseDependencies() const { return !UsedInputPoseNames.IsEmpty(); }
 	bool UsesInputPose(FName PoseName) const { return UsedInputPoseNames.Contains(PoseName); }
 
 private:
 	bool bIsInitialized = false;
-	bool bNeedsBasePose = false;
-	bool bNeedsOverlayPose = false;
 	bool bNeedsSlotEvaluation = false;
 	bool bHasOutputAffectingOperators = false;
 };

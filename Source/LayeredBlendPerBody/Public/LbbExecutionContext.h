@@ -10,11 +10,9 @@ struct FLbbCompiledPoseTarget;
 
 struct FLbbOperatorExecutionInputs
 {
-	const FPoseContext& RootPose;
-	const FPoseContext* OverlayPose = nullptr;
 	TArray<TOptional<FPoseContext>, TInlineAllocator<4>>* InputPoses = nullptr;
 	const TMap<FName, int32>* InputPoseIndices = nullptr;
-	TArray<TOptional<FPoseContext>, TInlineAllocator<4>>* CacheSlots = nullptr;
+	TArray<TOptional<FPoseContext>, TInlineAllocator<4>>* CachedPoses = nullptr;
 };
 
 struct FLbbOperatorExecutionContext

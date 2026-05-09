@@ -13,14 +13,6 @@ class LAYEREDBLENDPERBODYEDITOR_API ULbbInputListDetailsObject : public UObject
 	GENERATED_BODY()
 
 public:
-	ULbbInputListDetailsObject()
-	{
-		BuiltInInputNames.Add(Lbb::GetBasePoseInputName());
-	}
-
-	UPROPERTY(VisibleAnywhere, Category = "Inputs", meta = (DisplayName = "Built-in Inputs"))
-	TArray<FName> BuiltInInputNames;
-
-	UPROPERTY(EditAnywhere, Category = "Inputs", meta = (TitleProperty = "InputName", DisplayName = "Custom Inputs"))
-	TArray<FLbbInputPoseDefinition> CustomInputDefinitions;
+	UPROPERTY(EditAnywhere, Category = "Inputs", meta = (TitleProperty = "InputName"))
+	TArray<FLbbInputPoseDefinition> InputDefinitions;
 };

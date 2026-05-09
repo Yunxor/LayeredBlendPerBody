@@ -53,36 +53,32 @@ const FPoseContext& FLbbOperatorExecutionContext::ResolveSource(const FLbbOperat
 {
 	switch (Source.Kind)
 	{
-	case ELbbCompiledPoseSourceKind::Motion:
-	case ELbbCompiledPoseSourceKind::BasePose:
-		return Context.Inputs.RootPose;
-	case ELbbCompiledPoseSourceKind::OverlayPose:
-		if (Context.Inputs.OverlayPose != nullptr)
-		{
-			return *Context.Inputs.OverlayPose;
-		}
-		ensureMsgf(false, TEXT("OverlayPose source was requested but no overlay pose was provided."));
-		return Context.Inputs.RootPose;
 	case ELbbCompiledPoseSourceKind::CurrentPose:
 		return Context.CurrentPose;
 	case ELbbCompiledPoseSourceKind::InputPose:
 		{
-			check(Context.Inputs.InputPoses != nullptr);
-			check(Context.Inputs.InputPoseIndices != nullptr);
+			if (Context.Inputs.InputPoses == nullptr || Context.Inputs.InputPoseIndices == nullptr)
+			{
+				ensureMsgf(false, TEXT("Input poses is empty!"));
+				return Context.CurrentPose;
+			}
+			
 			const int32* InputPoseIndex = Context.Inputs.InputPoseIndices->Find(Source.PoseName);
 			if (InputPoseIndex == nullptr || !Context.Inputs.InputPoses->IsValidIndex(*InputPoseIndex) || !(*Context.Inputs.InputPoses)[*InputPoseIndex].IsSet())
 			{
 				ensureMsgf(false, TEXT("Input pose '%s' was not found or not evaluated."), *Source.PoseName.ToString());
-				return Context.Inputs.RootPose;
+				return Context.CurrentPose;
 			}
 
 			return (*Context.Inputs.InputPoses)[*InputPoseIndex].GetValue();
 		}
-	case ELbbCompiledPoseSourceKind::CacheSlot:
-		check(Context.Inputs.CacheSlots != nullptr);
-		check(Context.Inputs.CacheSlots->IsValidIndex(Source.PoseIndex));
-		check((*Context.Inputs.CacheSlots)[Source.PoseIndex].IsSet());
-		return (*Context.Inputs.CacheSlots)[Source.PoseIndex].GetValue();
+	case ELbbCompiledPoseSourceKind::CachedPose:
+		if (Context.Inputs.CachedPoses != nullptr
+			&& Context.Inputs.CachedPoses->IsValidIndex(Source.PoseIndex)
+			&& (*Context.Inputs.CachedPoses)[Source.PoseIndex].IsSet())
+		{
+			return (*Context.Inputs.CachedPoses)[Source.PoseIndex].GetValue();
+		}
 	default:
 		return Context.CurrentPose;
 	}
@@ -95,15 +91,18 @@ FPoseContext& FLbbOperatorExecutionContext::ResolveTarget(FLbbOperatorExecutionC
 		return Context.CurrentPose;
 	}
 
-	check(Target.Kind == ELbbCompiledPoseTargetKind::CacheSlot);
-	check(Context.Inputs.CacheSlots != nullptr);
-	check(Context.Inputs.CacheSlots->IsValidIndex(Target.PoseIndex));
-	if (!(*Context.Inputs.CacheSlots)[Target.PoseIndex].IsSet())
+	if (Context.Inputs.CachedPoses == nullptr || !Context.Inputs.CachedPoses->IsValidIndex(Target.PoseIndex))
 	{
-		(*Context.Inputs.CacheSlots)[Target.PoseIndex].Emplace(Context.CurrentPose);
+		ensureMsgf(false, TEXT("CachedPoses poses is empty or the Index(%d) is invalid !"), Target.PoseIndex);
+		return Context.CurrentPose;
+	}
+	
+	if (!(*Context.Inputs.CachedPoses)[Target.PoseIndex].IsSet())
+	{
+		(*Context.Inputs.CachedPoses)[Target.PoseIndex].Emplace(Context.CurrentPose);
 	}
 
-	return (*Context.Inputs.CacheSlots)[Target.PoseIndex].GetValue();
+	return (*Context.Inputs.CachedPoses)[Target.PoseIndex].GetValue();
 }
 
 void FLbbOperatorExecutionContext::AssignTarget(FLbbOperatorExecutionContext& Context, const FLbbCompiledPoseTarget& Target, const FPoseContext& Source)

@@ -170,6 +170,8 @@ void FLbbAnimNode_LayeredBlendBodyPart::Evaluate_AnyThread(FPoseContext& Output)
 
 	TArray<TOptional<FPoseContext>, TInlineAllocator<4>> InputPoseContexts;
 	TMap<FName, int32> InputPoseIndexMap;
+	InputPoseContexts.Add(BaseEvalContext);
+	InputPoseIndexMap.Add(Lbb::GetBasePoseInputName(), 0);
 	if (RuntimeData.HasInputPoseDependencies())
 	{
 		TSet<FName> EvaluatedInputAliases;
@@ -180,24 +182,21 @@ void FLbbAnimNode_LayeredBlendBodyPart::Evaluate_AnyThread(FPoseContext& Output)
 				continue;
 			}
 
-			const int32 RuntimeInputPoseIndex = InputPoseContexts.AddDefaulted();
-			InputPoseContexts[RuntimeInputPoseIndex].Emplace(Output);
+			const int32 RuntimeInputPoseIndex = InputPoseContexts.Emplace(Output);
 			InputPoses[PoseIndex].Evaluate(InputPoseContexts[RuntimeInputPoseIndex].GetValue());
 			InputPoseIndexMap.Add(InputPoseAliases[PoseIndex].PoseAlias, RuntimeInputPoseIndex);
 		}
 	}
 
-	TArray<TOptional<FPoseContext>, TInlineAllocator<4>> CacheSlots;
-	CacheSlots.SetNum(RuntimeData.GetCacheSlotCount());
+	TArray<TOptional<FPoseContext>, TInlineAllocator<4>> CachedPoses;
+	CachedPoses.SetNum(RuntimeData.GetCachedPoseCount());
 
 	Output = BaseEvalContext;
 
 	const FLbbOperatorExecutionInputs ExecutionInputs{
-		BaseEvalContext,
-		nullptr,
 		&InputPoseContexts,
 		&InputPoseIndexMap,
-		&CacheSlots};
+		&CachedPoses};
 
 	FPoseContext CacheProgramCurrentPose(Output);
 	CacheProgramCurrentPose = BaseEvalContext;

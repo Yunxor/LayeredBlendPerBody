@@ -90,7 +90,7 @@ FLbbEdGraphNodeInputDetails::FSourceTypeOption FLbbEdGraphNodeInputDetails::Find
 		return nullptr;
 	}
 
-	uint8 SourceTypeValue = static_cast<uint8>(ELbbLayeredBodyPartPoseSourceType::BasePose);
+	uint8 SourceTypeValue = static_cast<uint8>(ELbbLayeredBodyPartPoseSourceType::InputPose);
 	if (SourceTypeHandle->GetValue(SourceTypeValue) != FPropertyAccess::Success)
 	{
 		return nullptr;
@@ -114,7 +114,7 @@ FText FLbbEdGraphNodeInputDetails::GetSelectedSourceTypeText() const
 		return FText::GetEmpty();
 	}
 
-	uint8 SourceTypeValue = static_cast<uint8>(ELbbLayeredBodyPartPoseSourceType::BasePose);
+	uint8 SourceTypeValue = static_cast<uint8>(ELbbLayeredBodyPartPoseSourceType::InputPose);
 	if (SourceTypeHandle->GetValue(SourceTypeValue) != FPropertyAccess::Success)
 	{
 		return LOCTEXT("MultipleValues", "Multiple Values");
