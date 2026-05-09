@@ -63,6 +63,36 @@ namespace
 			Operator->Execute(ExecutionContext);
 		}
 	}
+
+	static bool ShouldProcessInputPose(
+		const FLbbLayeredBlendBodyRuntimeData& RuntimeData,
+		const TArray<FLbbLayeredBlendBodyInputPoseAlias>& InputPoseAliases,
+		const int32 PoseIndex,
+		TSet<FName>* SeenAliases = nullptr)
+	{
+		if (!InputPoseAliases.IsValidIndex(PoseIndex))
+		{
+			return false;
+		}
+
+		const FName PoseAlias = InputPoseAliases[PoseIndex].PoseAlias;
+		if (PoseAlias.IsNone() || !RuntimeData.UsesInputPose(PoseAlias))
+		{
+			return false;
+		}
+
+		if (SeenAliases != nullptr)
+		{
+			if (SeenAliases->Contains(PoseAlias))
+			{
+				return false;
+			}
+
+			SeenAliases->Add(PoseAlias);
+		}
+
+		return true;
+	}
 }
 
 
@@ -76,9 +106,11 @@ void FLbbAnimNode_LayeredBodyPartBlend::Initialize_AnyThread(const FAnimationIni
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_ANIMNODE(Initialize_AnyThread)
 	FAnimNode_Base::Initialize_AnyThread(Context);
 
-	Motion.Initialize(Context);
-	OverlayPose.Initialize(Context);
 	BasePose.Initialize(Context);
+	for (FPoseLink& InputPose : InputPoses)
+	{
+		InputPose.Initialize(Context);
+	}
 
 	if (!RuntimeData.IsInitialized())
 	{
@@ -91,9 +123,11 @@ void FLbbAnimNode_LayeredBodyPartBlend::CacheBones_AnyThread(const FAnimationCac
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_ANIMNODE(CacheBones_AnyThread)
 	FAnimNode_Base::CacheBones_AnyThread(Context);
 
-	Motion.CacheBones(Context);
-	OverlayPose.CacheBones(Context);
 	BasePose.CacheBones(Context);
+	for (FPoseLink& InputPose : InputPoses)
+	{
+		InputPose.CacheBones(Context);
+	}
 
 	UpdateCachedBoneData(Context.AnimInstanceProxy->GetRequiredBones(), Context.AnimInstanceProxy->GetSkeleton());
 }
@@ -102,35 +136,42 @@ void FLbbAnimNode_LayeredBodyPartBlend::Update_AnyThread(const FAnimationUpdateC
 {
 	DECLARE_SCOPE_HIERARCHICAL_COUNTER_ANIMNODE(Update_AnyThread)
 
-	if (IsLODEnabled(Context.AnimInstanceProxy) && BodyDefinition)
+	if (IsLODEnabled(Context.AnimInstanceProxy))
 	{
 		GetEvaluateGraphExposedInputs().Execute(Context);
 
-		if (!RuntimeData.IsInitialized())
+		if (BodyDefinition && !RuntimeData.IsInitialized())
 		{
 			ReinitRuntimeData();
 		}
 
-		UpdateCachedBoneData(Context.AnimInstanceProxy->GetRequiredBones(), Context.AnimInstanceProxy->GetSkeleton());
-		RuntimeData.UpdateBlendWeights(Context);
-
-		if (RuntimeData.IsNeedsSlotEvaluation())
+		if (BodyDefinition)
 		{
-			RuntimeData.UpdateSlotNodeWeights(Context);
+			UpdateCachedBoneData(Context.AnimInstanceProxy->GetRequiredBones(), Context.AnimInstanceProxy->GetSkeleton());
+			RuntimeData.UpdateBlendWeights(Context);
+
+			if (RuntimeData.IsNeedsSlotEvaluation())
+			{
+				RuntimeData.UpdateSlotNodeWeights(Context);
+			}
 		}
 
-		if (RuntimeData.IsNeedsOverlayPoseEvaluation())
+		if (RuntimeData.HasInputPoseDependencies())
 		{
-			OverlayPose.Update(Context.FractionalWeight(1.f));
-		}
+			TSet<FName> UpdatedInputAliases;
+			for (int32 PoseIndex = 0; PoseIndex < InputPoses.Num(); ++PoseIndex)
+			{
+				if (!ShouldProcessInputPose(RuntimeData, InputPoseAliases, PoseIndex, &UpdatedInputAliases))
+				{
+					continue;
+				}
 
-		if (RuntimeData.IsNeedsBasePoseEvaluation())
-		{
-			BasePose.Update(Context.FractionalWeight(1.f));
+				InputPoses[PoseIndex].Update(Context.FractionalWeight(1.f));
+			}
 		}
 	}
 
-	Motion.Update(Context.FractionalWeightAndRootMotion(1.f, 1.f));
+	BasePose.Update(Context.FractionalWeightAndRootMotion(1.f, 1.f));
 }
 
 void FLbbAnimNode_LayeredBodyPartBlend::Evaluate_AnyThread(FPoseContext& Output)
@@ -140,42 +181,48 @@ void FLbbAnimNode_LayeredBodyPartBlend::Evaluate_AnyThread(FPoseContext& Output)
 
 	FScopedExpectsAdditiveOverride ScopedExpectsAdditiveOverride(Output, false);
 
-	FPoseContext MotionEvalContext(Output);
-	Motion.Evaluate(MotionEvalContext);
+	FPoseContext BaseEvalContext(Output);
+	BasePose.Evaluate(BaseEvalContext);
 
 	if (RuntimeData.GetBodyPartCount() < 1 || !RuntimeData.HasOutputAffectingOperators())
 	{
-		MovePoseContextData(Output, MotionEvalContext);
+		MovePoseContextData(Output, BaseEvalContext);
 		return;
 	}
 
-	TOptional<FPoseContext> BaseEvalContext;
-	if (RuntimeData.IsNeedsBasePoseEvaluation())
+	TArray<TOptional<FPoseContext>, TInlineAllocator<4>> InputPoseContexts;
+	TMap<FName, int32> InputPoseIndexMap;
+	if (RuntimeData.HasInputPoseDependencies())
 	{
-		BaseEvalContext.Emplace(Output);
-		BasePose.Evaluate(BaseEvalContext.GetValue());
-	}
+		TSet<FName> EvaluatedInputAliases;
+		for (int32 PoseIndex = 0; PoseIndex < InputPoses.Num(); ++PoseIndex)
+		{
+			if (!ShouldProcessInputPose(RuntimeData, InputPoseAliases, PoseIndex, &EvaluatedInputAliases))
+			{
+				continue;
+			}
 
-	TOptional<FPoseContext> OverlayEvalContext;
-	if (RuntimeData.IsNeedsOverlayPoseEvaluation())
-	{
-		OverlayEvalContext.Emplace(Output);
-		OverlayPose.Evaluate(OverlayEvalContext.GetValue());
+			const int32 RuntimeInputPoseIndex = InputPoseContexts.AddDefaulted();
+			InputPoseContexts[RuntimeInputPoseIndex].Emplace(Output);
+			InputPoses[PoseIndex].Evaluate(InputPoseContexts[RuntimeInputPoseIndex].GetValue());
+			InputPoseIndexMap.Add(InputPoseAliases[PoseIndex].PoseAlias, RuntimeInputPoseIndex);
+		}
 	}
 
 	TArray<TOptional<FPoseContext>, TInlineAllocator<4>> CacheSlots;
 	CacheSlots.SetNum(RuntimeData.GetCacheSlotCount());
 
-	Output = MotionEvalContext;
+	Output = BaseEvalContext;
 
 	const FLbbOperatorExecutionInputs ExecutionInputs{
-		MotionEvalContext,
-		BaseEvalContext.IsSet() ? &BaseEvalContext.GetValue() : nullptr,
-		OverlayEvalContext.IsSet() ? &OverlayEvalContext.GetValue() : nullptr,
+		BaseEvalContext,
+		nullptr,
+		&InputPoseContexts,
+		&InputPoseIndexMap,
 		&CacheSlots};
 
 	FPoseContext CacheProgramCurrentPose(Output);
-	CacheProgramCurrentPose = MotionEvalContext;
+	CacheProgramCurrentPose = BaseEvalContext;
 	ExecuteOperatorProgram(RuntimeData.CacheProgram, ExecutionInputs, CacheProgramCurrentPose);
 
 	for (FLbbOperatorProgramRuntimeData& BodyPart : RuntimeData.BodyParts)
@@ -195,8 +242,32 @@ void FLbbAnimNode_LayeredBodyPartBlend::SetBodyDefinition(const TObjectPtr<class
 	ReinitRuntimeData();
 }
 
+int32 FLbbAnimNode_LayeredBodyPartBlend::AddInputPose()
+{
+	InputPoses.AddDefaulted();
+	InputPoseAliases.AddDefaulted();
+	return InputPoses.Num();
+}
+
+void FLbbAnimNode_LayeredBodyPartBlend::RemoveInputPose(const int32 PoseIndex)
+{
+	if (!InputPoses.IsValidIndex(PoseIndex))
+	{
+		return;
+	}
+
+	InputPoses.RemoveAt(PoseIndex);
+	if (InputPoseAliases.IsValidIndex(PoseIndex))
+	{
+		InputPoseAliases.RemoveAt(PoseIndex);
+	}
+
+	SyncInputPoseAliases();
+}
+
 void FLbbAnimNode_LayeredBodyPartBlend::ReinitRuntimeData()
 {
+	SyncInputPoseAliases();
 	RuntimeData.Reset();
 	if (BodyDefinition)
 	{
@@ -206,6 +277,11 @@ void FLbbAnimNode_LayeredBodyPartBlend::ReinitRuntimeData()
 	SkeletonGuid.Invalidate();
 	VirtualBoneGuid.Invalidate();
 	RequiredBonesSerialNumber = -1;
+}
+
+void FLbbAnimNode_LayeredBodyPartBlend::SyncInputPoseAliases()
+{
+	InputPoseAliases.SetNum(InputPoses.Num());
 }
 
 

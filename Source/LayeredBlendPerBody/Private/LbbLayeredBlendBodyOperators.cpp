@@ -22,6 +22,8 @@ namespace
 			return TEXT("Current Pose");
 		case ELbbLayeredBodyPartPoseSourceType::CachePose:
 			return FString::Printf(TEXT("Cache(%s)"), Source.CachePoseName.IsNone() ? TEXT("<None>") : *Source.CachePoseName.ToString());
+		case ELbbLayeredBodyPartPoseSourceType::InputPose:
+			return FString::Printf(TEXT("Input(%s)"), Source.InputPoseName.IsNone() ? TEXT("<None>") : *Source.InputPoseName.ToString());
 		default:
 			return TEXT("Unknown");
 		}
@@ -355,6 +357,12 @@ void FLbbCompiledOperator::AccumulateCommonRequirements(
 			break;
 		case ELbbCompiledPoseSourceKind::OverlayPose:
 			Requirements.bNeedsOverlayPose = true;
+			break;
+		case ELbbCompiledPoseSourceKind::InputPose:
+			if (!Source->PoseName.IsNone())
+			{
+				Requirements.UsedInputPoseNames.Add(Source->PoseName);
+			}
 			break;
 		default:
 			break;

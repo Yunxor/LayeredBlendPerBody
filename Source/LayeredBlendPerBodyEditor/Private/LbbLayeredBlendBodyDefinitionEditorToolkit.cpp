@@ -10,6 +10,7 @@
 #include "IDetailsView.h"
 #include "LbbLayeredBlendBodyDefinition.h"
 #include "LbbLayeredBlendBodyBodyPartDetailsObject.h"
+#include "LbbLayeredBlendBodyInputListDetailsObject.h"
 #include "LbbLayeredBlendBodyEdGraph.h"
 #include "GraphNodes/LbbLayeredBlendBodyEdGraphNode.h"
 #include "LbbLayeredBlendBodyGraphCompiler.h"
@@ -267,11 +268,32 @@ namespace
 			&& AreCompiledBodyPartsEqual(CompiledDefinition.BodyParts, Definition.BodyParts);
 	}
 
+	static bool AreInputDefinitionsEqual(
+		const TArray<FLbbLayeredBlendBodyInputDefinition>& Left,
+		const TArray<FLbbLayeredBlendBodyInputDefinition>& Right)
+	{
+		if (Left.Num() != Right.Num())
+		{
+			return false;
+		}
+
+		for (int32 Index = 0; Index < Left.Num(); ++Index)
+		{
+			if (Left[Index].InputName != Right[Index].InputName)
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 }
 
 const FName FLbbLayeredBlendBodyDefinitionEditorToolkit::BodyPartListTabId(TEXT("LbbLayeredBlendBodyDefinitionEditorToolkit_BodyParts"));
 const FName FLbbLayeredBlendBodyDefinitionEditorToolkit::GraphTabId(TEXT("LbbLayeredBlendBodyDefinitionEditorToolkit_Graph"));
 const FName FLbbLayeredBlendBodyDefinitionEditorToolkit::DetailsTabId(TEXT("LbbLayeredBlendBodyDefinitionEditorToolkit_Details"));
+const FName FLbbLayeredBlendBodyDefinitionEditorToolkit::InputsTabId(TEXT("LbbLayeredBlendBodyDefinitionEditorToolkit_Inputs"));
 const FName FLbbLayeredBlendBodyDefinitionEditorToolkit::CompiledOperatorsPreviewTabId(TEXT("LbbLayeredBlendBodyDefinitionEditorToolkit_CompiledOperatorsPreview"));
 const FName FLbbLayeredBlendBodyDefinitionEditorToolkit::CompileMessagesTabId(TEXT("LbbLayeredBlendBodyDefinitionEditorToolkit_CompileMessages"));
 const FName FLbbLayeredBlendBodyDefinitionEditorToolkit::EditorAppName(TEXT("LbbLayeredBlendBodyDefinitionEditorApp"));
@@ -305,6 +327,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::InitEditor(
 
 	BodyPartCommandList = MakeShared<FUICommandList>();
 	BodyPartDetailsObject = NewObject<ULbbLayeredBlendBodyBodyPartDetailsObject>(GetTransientPackage(), NAME_None, RF_Transactional);
+	InputListDetailsObject = NewObject<ULbbLayeredBlendBodyInputListDetailsObject>(GetTransientPackage(), NAME_None, RF_Transactional);
 	BindBodyPartCommands();
 
 	FPropertyEditorModule& PropertyEditorModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
@@ -315,6 +338,8 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::InitEditor(
 	DetailsViewArgs.NotifyHook = nullptr;
 	DetailsView = PropertyEditorModule.CreateDetailView(DetailsViewArgs);
 	DetailsView->OnFinishedChangingProperties().AddSP(this, &FLbbLayeredBlendBodyDefinitionEditorToolkit::HandleDetailsFinishedChangingProperties);
+	InputDetailsView = PropertyEditorModule.CreateDetailView(DetailsViewArgs);
+	InputDetailsView->OnFinishedChangingProperties().AddSP(this, &FLbbLayeredBlendBodyDefinitionEditorToolkit::HandleInputDetailsFinishedChangingProperties);
 
 	RefreshBodyPartItems();
 	if (BodyPartItems.Num() > 0)
@@ -323,8 +348,13 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::InitEditor(
 	}
 	CurrentGraphKind = ELbbLayeredBlendBodyGraphKind::Cache;
 	RefreshBodyPartDetailsObject();
+	RefreshInputDetailsObject();
+	if (InputDetailsView.IsValid())
+	{
+		InputDetailsView->SetObject(InputListDetailsObject.Get());
+	}
 
-	const TSharedRef<FTabManager::FLayout> Layout = FTabManager::NewLayout("Standalone_LbbLayeredBlendBodyDefinitionEditor_v2")
+	const TSharedRef<FTabManager::FLayout> Layout = FTabManager::NewLayout("Standalone_LbbLayeredBlendBodyDefinitionEditor_v3")
 		->AddArea
 		(
 			FTabManager::NewPrimaryArea()
@@ -353,6 +383,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::InitEditor(
 					FTabManager::NewStack()
 					->SetSizeCoefficient(0.25f)
 					->AddTab(DetailsTabId, ETabState::OpenedTab)
+					->AddTab(InputsTabId, ETabState::OpenedTab)
 					->AddTab(CompiledOperatorsPreviewTabId, ETabState::OpenedTab)
 					->SetForegroundTab(FTabId(DetailsTabId))
 				)
@@ -423,6 +454,9 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RegisterTabSpawners(const TSha
 	InTabManager->RegisterTabSpawner(DetailsTabId, FOnSpawnTab::CreateSP(this, &FLbbLayeredBlendBodyDefinitionEditorToolkit::SpawnDetailsTab))
 		.SetDisplayName(LOCTEXT("DetailsTabTitle", "Details"))
 		.SetGroup(GetWorkspaceMenuCategory());
+	InTabManager->RegisterTabSpawner(InputsTabId, FOnSpawnTab::CreateSP(this, &FLbbLayeredBlendBodyDefinitionEditorToolkit::SpawnInputsTab))
+		.SetDisplayName(LOCTEXT("InputsTabTitle", "Inputs"))
+		.SetGroup(GetWorkspaceMenuCategory());
 	InTabManager->RegisterTabSpawner(CompiledOperatorsPreviewTabId, FOnSpawnTab::CreateSP(this, &FLbbLayeredBlendBodyDefinitionEditorToolkit::SpawnCompiledOperatorsPreviewTab))
 		.SetDisplayName(LOCTEXT("CompiledOperatorsPreviewTabTitle", "Compiled Operators Preview"))
 		.SetGroup(GetWorkspaceMenuCategory());
@@ -436,6 +470,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::UnregisterTabSpawners(const TS
 	InTabManager->UnregisterTabSpawner(BodyPartListTabId);
 	InTabManager->UnregisterTabSpawner(GraphTabId);
 	InTabManager->UnregisterTabSpawner(DetailsTabId);
+	InTabManager->UnregisterTabSpawner(InputsTabId);
 	InTabManager->UnregisterTabSpawner(CompiledOperatorsPreviewTabId);
 	InTabManager->UnregisterTabSpawner(CompileMessagesTabId);
 	FAssetEditorToolkit::UnregisterTabSpawners(InTabManager);
@@ -569,6 +604,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::SelectCacheGraph(const bool bF
 	SyncCurrentGraphToModel();
 	CurrentGraphKind = ELbbLayeredBlendBodyGraphKind::Cache;
 	RefreshBodyPartDetailsObject();
+	RefreshInputDetailsObject();
 	RebuildCurrentGraph();
 	RebuildGraphWidget();
 	RefreshDetailsPanel();
@@ -590,6 +626,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::SelectBodyPart(const int32 Bod
 	CurrentGraphKind = ELbbLayeredBlendBodyGraphKind::BodyPart;
 	CurrentBodyPartIndex = BodyPartIndex;
 	RefreshBodyPartDetailsObject();
+	RefreshInputDetailsObject();
 	RebuildCurrentGraph();
 	RebuildGraphWidget();
 	RefreshDetailsPanel();
@@ -891,7 +928,7 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshDetailsPanel()
 		&& EditingDefinition.IsValid()
 		&& EditingDefinition->EditorModel.BodyPartGraphs.IsValidIndex(CurrentBodyPartIndex))
 	{
-		DetailsView->SetObject(BodyPartDetailsObject);
+		DetailsView->SetObject(BodyPartDetailsObject.Get());
 	}
 	else
 	{
@@ -1037,12 +1074,37 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::SyncBodyPartDetailsToModel()
 	Definition->MarkPackageDirty();
 }
 
+void FLbbLayeredBlendBodyDefinitionEditorToolkit::SyncInputDefinitionsToModel()
+{
+	if (bIsSynchronizing || InputListDetailsObject == nullptr)
+	{
+		return;
+	}
+
+	ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
+	if (Definition == nullptr)
+	{
+		return;
+	}
+
+	if (AreInputDefinitionsEqual(Definition->InputDefinitions, InputListDetailsObject->CustomInputDefinitions))
+	{
+		return;
+	}
+
+	Definition->Modify();
+	Definition->InputDefinitions = InputListDetailsObject->CustomInputDefinitions;
+	Definition->MarkPackageDirty();
+}
+
 void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshBodyPartDetailsObject()
 {
 	if (BodyPartDetailsObject == nullptr)
 	{
 		return;
 	}
+
+	TGuardValue<bool> Guard(bIsSynchronizing, true);
 
 	const ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
 	if (CurrentGraphKind != ELbbLayeredBlendBodyGraphKind::BodyPart
@@ -1057,6 +1119,38 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshBodyPartDetailsObject()
 	const FLbbLayeredBlendBodyPartGraphModel& GraphModel = Definition->EditorModel.BodyPartGraphs[CurrentBodyPartIndex];
 	BodyPartDetailsObject->PartName = GraphModel.PartName;
 	BodyPartDetailsObject->DebugColor = GraphModel.DebugColor;
+}
+
+void FLbbLayeredBlendBodyDefinitionEditorToolkit::RefreshInputDetailsObject()
+{
+	if (InputListDetailsObject == nullptr)
+	{
+		return;
+	}
+
+	TGuardValue<bool> Guard(bIsSynchronizing, true);
+
+	const ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
+	if (Definition == nullptr)
+	{
+		InputListDetailsObject->BuiltInInputNames.Reset();
+		InputListDetailsObject->BuiltInInputNames.Add(LbbLayeredBlendBody::GetBasePoseInputName());
+		InputListDetailsObject->CustomInputDefinitions.Reset();
+		if (InputDetailsView.IsValid())
+		{
+			InputDetailsView->SetObject(InputListDetailsObject.Get());
+		}
+		return;
+	}
+
+	InputListDetailsObject->BuiltInInputNames.Reset();
+	InputListDetailsObject->BuiltInInputNames.Add(LbbLayeredBlendBody::GetBasePoseInputName());
+	InputListDetailsObject->CustomInputDefinitions = Definition->InputDefinitions;
+
+	if (InputDetailsView.IsValid())
+	{
+		InputDetailsView->SetObject(InputListDetailsObject.Get());
+	}
 }
 
 bool FLbbLayeredBlendBodyDefinitionEditorToolkit::CompileDefinition(const bool bMarkDirty, const bool bForceRefreshMessages)
@@ -1339,6 +1433,17 @@ void FLbbLayeredBlendBodyDefinitionEditorToolkit::HandleDetailsFinishedChangingP
 	CompileDefinition(true);
 }
 
+void FLbbLayeredBlendBodyDefinitionEditorToolkit::HandleInputDetailsFinishedChangingProperties(const FPropertyChangedEvent& PropertyChangedEvent)
+{
+	if (bIsSynchronizing)
+	{
+		return;
+	}
+
+	SyncInputDefinitionsToModel();
+	CompileDefinition(true);
+}
+
 void FLbbLayeredBlendBodyDefinitionEditorToolkit::HandleAddBodyPart()
 {
 	ULbbLayeredBlendBodyDefinition* Definition = EditingDefinition.Get();
@@ -1517,6 +1622,16 @@ TSharedRef<SDockTab> FLbbLayeredBlendBodyDefinitionEditorToolkit::SpawnDetailsTa
 	[
 		DetailsView.IsValid()
 			? DetailsView.ToSharedRef()
+			: SNullWidget::NullWidget
+	];
+}
+
+TSharedRef<SDockTab> FLbbLayeredBlendBodyDefinitionEditorToolkit::SpawnInputsTab(const FSpawnTabArgs& Args)
+{
+	return SNew(SDockTab)
+	[
+		InputDetailsView.IsValid()
+			? InputDetailsView.ToSharedRef()
 			: SNullWidget::NullWidget
 	];
 }

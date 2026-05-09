@@ -54,15 +54,30 @@ const FPoseContext& FLbbOperatorExecutionContext::ResolveSource(const FLbbOperat
 	switch (Source.Kind)
 	{
 	case ELbbCompiledPoseSourceKind::Motion:
-		return Context.Inputs.MotionPose;
 	case ELbbCompiledPoseSourceKind::BasePose:
-		check(Context.Inputs.BasePose != nullptr);
-		return *Context.Inputs.BasePose;
+		return Context.Inputs.RootPose;
 	case ELbbCompiledPoseSourceKind::OverlayPose:
-		check(Context.Inputs.OverlayPose != nullptr);
-		return *Context.Inputs.OverlayPose;
+		if (Context.Inputs.OverlayPose != nullptr)
+		{
+			return *Context.Inputs.OverlayPose;
+		}
+		ensureMsgf(false, TEXT("OverlayPose source was requested but no overlay pose was provided."));
+		return Context.Inputs.RootPose;
 	case ELbbCompiledPoseSourceKind::CurrentPose:
 		return Context.CurrentPose;
+	case ELbbCompiledPoseSourceKind::InputPose:
+		{
+			check(Context.Inputs.InputPoses != nullptr);
+			check(Context.Inputs.InputPoseIndices != nullptr);
+			const int32* InputPoseIndex = Context.Inputs.InputPoseIndices->Find(Source.PoseName);
+			if (InputPoseIndex == nullptr || !Context.Inputs.InputPoses->IsValidIndex(*InputPoseIndex) || !(*Context.Inputs.InputPoses)[*InputPoseIndex].IsSet())
+			{
+				ensureMsgf(false, TEXT("Input pose '%s' was not found or not evaluated."), *Source.PoseName.ToString());
+				return Context.Inputs.RootPose;
+			}
+
+			return (*Context.Inputs.InputPoses)[*InputPoseIndex].GetValue();
+		}
 	case ELbbCompiledPoseSourceKind::CacheSlot:
 		check(Context.Inputs.CacheSlots != nullptr);
 		check(Context.Inputs.CacheSlots->IsValidIndex(Source.PoseIndex));

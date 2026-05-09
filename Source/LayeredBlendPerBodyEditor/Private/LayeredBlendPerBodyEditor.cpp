@@ -1,7 +1,11 @@
 #include "LayeredBlendPerBodyEditor.h"
 
 #include "GraphNodes/LbbLayeredBlendBodyEdGraphNode.h"
+#include "GraphNodes/LbbLayeredBlendBodyEdGraphNode_Input.h"
+#include "GraphNodes/LbbLayeredBlendBodyEdGraphNode_InputDetails.h"
 #include "LbbLayeredBlendBodyGraphNodeRegistry.h"
+#include "Modules/ModuleManager.h"
+#include "PropertyEditorModule.h"
 #include "UObject/UObjectHash.h"
 
 #define LOCTEXT_NAMESPACE "FLayeredBlendPerBodyEditorModule"
@@ -53,10 +57,23 @@ void FLayeredBlendPerBodyEditorModule::StartupModule()
 {
 	ResetLbbLayeredBlendBodyGraphNodeRegistry();
 	RegisterAllLbbLayeredBlendBodyGraphNodes();
+
+	FPropertyEditorModule& PropertyEditorModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
+	PropertyEditorModule.RegisterCustomClassLayout(
+		ULbbLayeredBlendBodyEdGraphNode_Input::StaticClass()->GetFName(),
+		FOnGetDetailCustomizationInstance::CreateStatic(&FLbbLayeredBlendBodyEdGraphNodeInputDetails::MakeInstance));
+	PropertyEditorModule.NotifyCustomizationModuleChanged();
 }
 
 void FLayeredBlendPerBodyEditorModule::ShutdownModule()
 {
+	if (FModuleManager::Get().IsModuleLoaded("PropertyEditor"))
+	{
+		FPropertyEditorModule& PropertyEditorModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
+		PropertyEditorModule.UnregisterCustomClassLayout(ULbbLayeredBlendBodyEdGraphNode_Input::StaticClass()->GetFName());
+		PropertyEditorModule.NotifyCustomizationModuleChanged();
+	}
+
 	ResetLbbLayeredBlendBodyGraphNodeRegistry();
 }
 

@@ -12,6 +12,7 @@ const FName ULbbLayeredBlendBodyEdGraphNode::PosePinCategory(TEXT("Pose"));
 namespace LbbLayeredBlendBodyEdGraphNodeUtils
 {
 	const FName PinPose(TEXT("Pose"));
+	const FName PinBasePose(TEXT("BasePose"));
 	const FName PinInput(TEXT("Input"));
 	const FName PinBase(TEXT("Base"));
 	const FName PinBlend(TEXT("Blend"));
@@ -61,9 +62,18 @@ namespace LbbLayeredBlendBodyEdGraphNodeUtils
 			return FString::Printf(
 				TEXT("Cache(%s)"),
 				SourcePose.CachePoseName.IsNone() ? TEXT("<None>") : *SourcePose.CachePoseName.ToString());
+		case ELbbLayeredBodyPartPoseSourceType::InputPose:
+			return FString::Printf(
+				TEXT("Input(%s)"),
+				SourcePose.InputPoseName.IsNone() ? TEXT("<None>") : *SourcePose.InputPoseName.ToString());
 		default:
 			return TEXT("Unknown");
 		}
+	}
+
+	FString FormatInputNameSummary(const FName InputName)
+	{
+		return InputName.IsNone() ? TEXT("<None>") : InputName.ToString();
 	}
 
 	FLbbLayeredBlendBodyGraphNodeDescriptor MakeNodeDescriptor(

@@ -53,6 +53,10 @@ namespace
 				OutSource.Kind = ELbbCompiledPoseSourceKind::CacheSlot;
 				OutSource.PoseIndex = FindExistingCacheSlotIndex(InSource.CachePoseName);
 				break;
+			case ELbbLayeredBodyPartPoseSourceType::InputPose:
+				OutSource.Kind = ELbbCompiledPoseSourceKind::InputPose;
+				OutSource.PoseName = InSource.InputPoseName;
+				break;
 			default:
 				break;
 			}
@@ -143,6 +147,7 @@ void FLbbOperatorProgramRuntimeData::Reset()
 {
 	Operators.Reset();
 	SlotNodesData.Reset();
+	UsedInputPoseNames.Reset();
 	bNeedsBasePose = false;
 	bNeedsOverlayPose = false;
 	bNeedsSlotEvaluation = false;
@@ -204,6 +209,10 @@ void FLbbOperatorProgramRuntimeData::AddCompiledOperatorToProgram(TUniquePtr<FLb
 	bNeedsOverlayPose |= Requirements.bNeedsOverlayPose;
 	bNeedsSlotEvaluation |= Requirements.bNeedsSlotEvaluation;
 	bCanAffectCurrentPose |= Requirements.bCanAffectCurrentPose;
+	for (const FName InputPoseName : Requirements.UsedInputPoseNames)
+	{
+		UsedInputPoseNames.Add(InputPoseName);
+	}
 	Operators.Add(MoveTemp(Operator));
 }
 
@@ -250,6 +259,10 @@ void FLbbLayeredBlendBodyRuntimeData::InitFromDefinition(
 	bNeedsBasePose |= CacheProgram.IsNeedsBasePose();
 	bNeedsOverlayPose |= CacheProgram.IsNeedsOverlayPose();
 	bNeedsSlotEvaluation |= CacheProgram.IsNeedsSlotEvaluation();
+	for (const FName InputPoseName : CacheProgram.UsedInputPoseNames)
+	{
+		UsedInputPoseNames.Add(InputPoseName);
+	}
 
 	BodyParts.Reset(BodyPartDefinitions.Num());
 	for (const FLbbLayeredBlendBodyPart& BodyPartDefinition : BodyPartDefinitions)
@@ -261,6 +274,10 @@ void FLbbLayeredBlendBodyRuntimeData::InitFromDefinition(
 		bNeedsOverlayPose |= RuntimeBodyPart.IsNeedsOverlayPose();
 		bNeedsSlotEvaluation |= RuntimeBodyPart.IsNeedsSlotEvaluation();
 		bHasOutputAffectingOperators |= RuntimeBodyPart.CanAffectCurrentPose();
+		for (const FName InputPoseName : RuntimeBodyPart.UsedInputPoseNames)
+		{
+			UsedInputPoseNames.Add(InputPoseName);
+		}
 	}
 
 	bIsInitialized = true;
@@ -271,6 +288,7 @@ void FLbbLayeredBlendBodyRuntimeData::Reset()
 	CacheProgram.Reset();
 	BodyParts.Reset();
 	CacheSlotNames.Reset();
+	UsedInputPoseNames.Reset();
 	bIsInitialized = false;
 	bNeedsBasePose = false;
 	bNeedsOverlayPose = false;

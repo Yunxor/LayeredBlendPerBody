@@ -10,6 +10,7 @@
 namespace LbbLayeredBlendBodyEdGraphNodeUtils
 {
 	extern const FName PinPose;
+	extern const FName PinBasePose;
 	extern const FName PinInput;
 	extern const FName PinBase;
 	extern const FName PinBlend;
@@ -26,6 +27,7 @@ namespace LbbLayeredBlendBodyEdGraphNodeUtils
 	FString FormatBlendWeightSummary(const FLbbBlendWeight& Weight);
 	FString FormatBoneSpaceSummary(ELbbBoneSpace BoneSpace);
 	FString FormatPoseSourceSummary(const FLbbLayeredBodyPartPoseSource& SourcePose);
+	FString FormatInputNameSummary(const FName InputName);
 
 	FLbbLayeredBlendBodyGraphNodeDescriptor MakeNodeDescriptor(
 		const UScriptStruct* NodeDataStruct,

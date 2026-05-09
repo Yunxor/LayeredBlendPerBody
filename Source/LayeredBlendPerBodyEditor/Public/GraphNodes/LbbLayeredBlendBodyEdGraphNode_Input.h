@@ -20,13 +20,21 @@ class LAYEREDBLENDPERBODYEDITOR_API ULbbLayeredBlendBodyEdGraphNode_Input : publ
 
 public:
 	UPROPERTY(EditAnywhere, Category = "Node")
-	ELbbLayeredBodyPartPoseSourceType SourceType = ELbbLayeredBodyPartPoseSourceType::CurrentPose;
+	ELbbLayeredBodyPartPoseSourceType SourceType = ELbbLayeredBodyPartPoseSourceType::BasePose;
+
+	UPROPERTY(EditAnywhere, Category = "Node", meta = (EditCondition = "SourceType == ELbbLayeredBodyPartPoseSourceType::InputPose", EditConditionHides, GetOptions = "GetAvailableInputPoseOptions"))
+	FName InputPoseName = NAME_None;
 
 	UPROPERTY(EditAnywhere, Category = "Node", meta = (EditCondition = "SourceType == ELbbLayeredBodyPartPoseSourceType::CachePose", EditConditionHides, GetOptions = "GetAvailableCachePoseOptions"))
 	FName CachePoseName = NAME_None;
 
 	UFUNCTION()
+	TArray<FString> GetAvailableInputPoseOptions() const;
+
+	UFUNCTION()
 	TArray<FString> GetAvailableCachePoseOptions() const;
+
+	TArray<ELbbLayeredBodyPartPoseSourceType> GetAvailableSourceTypes() const;
 
 	virtual const UScriptStruct* GetNodeDataStruct() const override { return FLbbLayeredBlendBodyGraphNodeData_Input::StaticStruct(); }
 	virtual FLbbLayeredBlendBodyGraphNodeDescriptor BuildGraphNodeDescriptor() const override;
@@ -47,5 +55,6 @@ private:
 	void SetSourcePose(const FLbbLayeredBodyPartPoseSource& InSourcePose);
 	void SanitizeSourceSelection();
 	bool IsSourceTypeAllowedInCurrentGraph(ELbbLayeredBodyPartPoseSourceType InSourceType) const;
+	bool IsAvailableInputPose(FName InInputPoseName) const;
 	bool IsAvailableNamedCache(FName InCachePoseName) const;
 };

@@ -14,6 +14,7 @@ struct FLbbOperatorProgramRuntimeData
 {
 	TArray<TUniquePtr<FLbbCompiledOperator>> Operators;
 	TArray<FLbbSlotNodeData> SlotNodesData;
+	TSet<FName> UsedInputPoseNames;
 
 	FLbbOperatorProgramRuntimeData();
 	FLbbOperatorProgramRuntimeData(const FLbbOperatorProgramRuntimeData&) = delete;
@@ -38,6 +39,7 @@ struct FLbbOperatorProgramRuntimeData
 	bool IsNeedsBasePose() const { return bNeedsBasePose; }
 	bool IsNeedsOverlayPose() const { return bNeedsOverlayPose; }
 	bool IsNeedsSlotEvaluation() const { return bNeedsSlotEvaluation; }
+	bool UsesInputPose(FName PoseName) const { return UsedInputPoseNames.Contains(PoseName); }
 
 	bool bNeedsBasePose = false;
 	bool bNeedsOverlayPose = false;
@@ -51,6 +53,7 @@ struct FLbbLayeredBlendBodyRuntimeData
 	FLbbOperatorProgramRuntimeData CacheProgram;
 	TArray<FLbbOperatorProgramRuntimeData> BodyParts;
 	TArray<FName> CacheSlotNames;
+	TSet<FName> UsedInputPoseNames;
 
 	FLbbLayeredBlendBodyRuntimeData();
 	FLbbLayeredBlendBodyRuntimeData(const FLbbLayeredBlendBodyRuntimeData&) = delete;
@@ -77,6 +80,8 @@ struct FLbbLayeredBlendBodyRuntimeData
 	bool IsNeedsOverlayPoseEvaluation() const { return bNeedsOverlayPose; }
 	bool IsNeedsSlotEvaluation() const { return bNeedsSlotEvaluation; }
 	int32 GetCacheSlotCount() const { return CacheSlotNames.Num(); }
+	bool HasInputPoseDependencies() const { return !UsedInputPoseNames.IsEmpty(); }
+	bool UsesInputPose(FName PoseName) const { return UsedInputPoseNames.Contains(PoseName); }
 
 private:
 	bool bIsInitialized = false;

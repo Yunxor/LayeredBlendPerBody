@@ -39,6 +39,7 @@ public class LayeredBlendPerBodyUncooked : ModuleRules
                     "BlueprintGraph",
                     "EditorFramework",
                     "Kismet",
+                    "ToolMenus",
                     "UnrealEd",
                 }
             );

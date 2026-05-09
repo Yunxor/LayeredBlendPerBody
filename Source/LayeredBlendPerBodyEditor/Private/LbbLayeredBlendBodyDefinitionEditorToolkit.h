@@ -17,6 +17,7 @@ class ULbbLayeredBlendBodyDefinition;
 class ULbbLayeredBlendBodyEdGraph;
 class ULbbLayeredBlendBodyEdGraphNode;
 class ULbbLayeredBlendBodyBodyPartDetailsObject;
+class ULbbLayeredBlendBodyInputListDetailsObject;
 
 class FLbbLayeredBlendBodyDefinitionEditorToolkit : public FAssetEditorToolkit
 {
@@ -59,6 +60,7 @@ private:
 	static const FName BodyPartListTabId;
 	static const FName GraphTabId;
 	static const FName DetailsTabId;
+	static const FName InputsTabId;
 	static const FName CompiledOperatorsPreviewTabId;
 	static const FName CompileMessagesTabId;
 	static const FName EditorAppName;
@@ -77,7 +79,9 @@ private:
 	void RefreshDetailsPanel();
 	void SyncCurrentGraphToModel();
 	void SyncBodyPartDetailsToModel();
+	void SyncInputDefinitionsToModel();
 	void RefreshBodyPartDetailsObject();
+	void RefreshInputDetailsObject();
 	bool CompileDefinition(bool bMarkDirty, bool bForceRefreshMessages = true);
 	void RefreshCompileMessages(const FLbbCompileResult& CompileResult);
 	void RefreshCompiledOperatorsPreview();
@@ -88,6 +92,7 @@ private:
 	void HandleGraphChanged(const struct FEdGraphEditAction& GraphEditAction);
 	void HandleGraphSelectionChanged(const TSet<UObject*>& NewSelection);
 	void HandleDetailsFinishedChangingProperties(const struct FPropertyChangedEvent& PropertyChangedEvent);
+	void HandleInputDetailsFinishedChangingProperties(const struct FPropertyChangedEvent& PropertyChangedEvent);
 
 	void HandleAddBodyPart();
 	void HandleDuplicateBodyPart();
@@ -105,6 +110,7 @@ private:
 	TSharedRef<class SDockTab> SpawnBodyPartListTab(const class FSpawnTabArgs& Args);
 	TSharedRef<class SDockTab> SpawnGraphTab(const class FSpawnTabArgs& Args);
 	TSharedRef<class SDockTab> SpawnDetailsTab(const class FSpawnTabArgs& Args);
+	TSharedRef<class SDockTab> SpawnInputsTab(const class FSpawnTabArgs& Args);
 	TSharedRef<class SDockTab> SpawnCompiledOperatorsPreviewTab(const class FSpawnTabArgs& Args);
 	TSharedRef<class SDockTab> SpawnCompileMessagesTab(const class FSpawnTabArgs& Args);
 	TSharedRef<class ITableRow> HandleGenerateBodyPartRow(TSharedPtr<int32> Item, const TSharedRef<class STableViewBase>& OwnerTable);
@@ -121,8 +127,10 @@ private:
 	TWeakObjectPtr<ULbbLayeredBlendBodyDefinition> EditingDefinition;
 	TObjectPtr<ULbbLayeredBlendBodyEdGraph> CurrentGraph = nullptr;
 	TObjectPtr<ULbbLayeredBlendBodyBodyPartDetailsObject> BodyPartDetailsObject = nullptr;
+	TObjectPtr<ULbbLayeredBlendBodyInputListDetailsObject> InputListDetailsObject = nullptr;
 	TSharedPtr<SGraphEditor> GraphEditorWidget;
 	TSharedPtr<IDetailsView> DetailsView;
+	TSharedPtr<IDetailsView> InputDetailsView;
 	TSharedPtr<FUICommandList> BodyPartCommandList;
 	TSharedPtr<SMultiLineEditableTextBox> CompiledOperatorsPreviewTextBox;
 	TSharedPtr<SListView<TSharedPtr<FCompileMessageListItem>>> CompileMessagesListView;

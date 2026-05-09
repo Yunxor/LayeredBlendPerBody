@@ -23,6 +23,15 @@ struct FLbbAnimNodeRef_LayeredBodyPartBlend : public FAnimNodeReference
 	typedef struct FLbbAnimNode_LayeredBodyPartBlend FInternalNodeType;
 };
 
+USTRUCT(BlueprintType)
+struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyInputPoseAlias
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input")
+	FName PoseAlias = NAME_None;
+};
+
 UCLASS()
 class LAYEREDBLENDPERBODY_API ULbbLayeredBodyPartBlendAnimNodeLibrary : public UBlueprintFunctionLibrary
 {
@@ -55,11 +64,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Links)
 	FPoseLink BasePose;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Links)
-	FPoseLink OverlayPose;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, EditFixedSize, Category=Links, meta=(BlueprintCompilerGeneratedDefaults))
+	TArray<FPoseLink> InputPoses;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Links)
-	FPoseLink Motion;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, EditFixedSize, Category="Inputs", meta=(TitleProperty = "PoseAlias"))
+	TArray<FLbbLayeredBlendBodyInputPoseAlias> InputPoseAliases;
 	
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Definition", meta =(PinShownByDefault))
@@ -73,9 +82,13 @@ public:
 	virtual void Update_AnyThread(const FAnimationUpdateContext& Context) override;
 	virtual void Evaluate_AnyThread(FPoseContext& Output) override;
 	void SetBodyDefinition(const TObjectPtr<class ULbbLayeredBlendBodyDefinition> InBodyDefinition);
+	const ULbbLayeredBlendBodyDefinition* GetBodyDefinition() const { return BodyDefinition.Get(); }
 	void ReinitRuntimeData();
+	int32 AddInputPose();
+	void RemoveInputPose(int32 PoseIndex);
 	
 private:
+	void SyncInputPoseAliases();
 	void RebuildBoneBlendWeights(const USkeleton* InSkeleton);
 	bool AreValidBoneBlendWeights(const USkeleton* InSkeleton) const;
 	

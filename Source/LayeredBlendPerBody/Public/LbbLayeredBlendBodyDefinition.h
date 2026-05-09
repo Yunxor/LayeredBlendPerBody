@@ -49,6 +49,9 @@ class LAYEREDBLENDPERBODY_API ULbbLayeredBlendBodyDefinition : public UDataAsset
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(EditAnywhere, Category = "Inputs", meta = (TitleProperty = "InputName"))
+	TArray<FLbbLayeredBlendBodyInputDefinition> InputDefinitions;
+
 	UPROPERTY(VisibleAnywhere, Category ="Runtime")
 	FLbbLayeredBlendBodyCacheProgram CacheProgram;
 

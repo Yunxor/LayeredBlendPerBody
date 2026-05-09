@@ -109,15 +109,38 @@ struct FLbbBlendWeight
 	void Reset() { BlendWeight = 0.f; }
 };
 
+USTRUCT(BlueprintType)
+struct LAYEREDBLENDPERBODY_API FLbbLayeredBlendBodyInputDefinition
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input")
+	FName InputName = NAME_None;
+};
+
+namespace LbbLayeredBlendBody
+{
+	inline const FName& GetBasePoseInputName()
+	{
+		static const FName BasePoseInputName(TEXT("BasePose"));
+		return BasePoseInputName;
+	}
+
+	inline bool IsBuiltInInputName(const FName InputName)
+	{
+		return InputName == GetBasePoseInputName();
+	}
+}
 
 UENUM(BlueprintType)
 enum class ELbbLayeredBodyPartPoseSourceType : uint8
 {
-	Motion,
+	Motion UMETA(Hidden),
 	BasePose,
-	OverlayPose,
-	CurrentPose,
+	OverlayPose UMETA(Hidden),
+	CurrentPose UMETA(Hidden),
 	CachePose,
+	InputPose,
 };
 
 UENUM(BlueprintType)
@@ -137,6 +160,9 @@ struct FLbbLayeredBodyPartPoseSource
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose", meta = (EditCondition = "Type == ELbbLayeredBodyPartPoseSourceType::CachePose", EditConditionHides))
 	FName CachePoseName = NAME_None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Pose", meta = (EditCondition = "Type == ELbbLayeredBodyPartPoseSourceType::InputPose", EditConditionHides))
+	FName InputPoseName = NAME_None;
 };
 
 USTRUCT(BlueprintType)

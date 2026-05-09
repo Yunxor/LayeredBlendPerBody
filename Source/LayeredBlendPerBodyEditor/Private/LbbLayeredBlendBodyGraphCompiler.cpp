@@ -139,9 +139,7 @@ namespace
 		{
 			if (GraphKind == ELbbLayeredBlendBodyGraphKind::Cache)
 			{
-				return SourceType == ELbbLayeredBodyPartPoseSourceType::Motion
-					|| SourceType == ELbbLayeredBodyPartPoseSourceType::BasePose
-					|| SourceType == ELbbLayeredBodyPartPoseSourceType::OverlayPose;
+				return SourceType != ELbbLayeredBodyPartPoseSourceType::CachePose;
 			}
 
 			return true;
@@ -199,6 +197,57 @@ namespace
 			Target.Type = ELbbLayeredBodyPartPoseTargetType::CachePose;
 			Target.CachePoseName = CachePoseName;
 			return Target;
+		}
+
+		static bool CollectInputPoseNames(
+			const ULbbLayeredBlendBodyDefinition& Definition,
+			TSet<FName>& OutValidInputPoseNames,
+			TArray<FLbbCompileMessage>& OutMessages)
+		{
+			TSet<FName> SeenNames;
+			for (const FLbbLayeredBlendBodyInputDefinition& InputDefinition : Definition.InputDefinitions)
+			{
+				if (InputDefinition.InputName.IsNone())
+				{
+					AddMessage(
+						OutMessages,
+						EMessageSeverity::Error,
+						ELbbLayeredBlendBodyGraphKind::Cache,
+						INDEX_NONE,
+						FGuid(),
+						TEXT("Input definition requires a valid InputName."));
+					continue;
+				}
+
+				if (LbbLayeredBlendBody::IsBuiltInInputName(InputDefinition.InputName))
+				{
+					AddMessage(
+						OutMessages,
+						EMessageSeverity::Error,
+						ELbbLayeredBlendBodyGraphKind::Cache,
+						INDEX_NONE,
+						FGuid(),
+						TEXT("InputName 'BasePose' is reserved."));
+					continue;
+				}
+
+				if (SeenNames.Contains(InputDefinition.InputName))
+				{
+					AddMessage(
+						OutMessages,
+						EMessageSeverity::Error,
+						ELbbLayeredBlendBodyGraphKind::Cache,
+						INDEX_NONE,
+						FGuid(),
+						FString::Printf(TEXT("Duplicate InputName '%s'."), *InputDefinition.InputName.ToString()));
+					continue;
+				}
+
+				SeenNames.Add(InputDefinition.InputName);
+				OutValidInputPoseNames.Add(InputDefinition.InputName);
+			}
+
+			return !HasErrors(OutMessages);
 		}
 
 		static FLbbLayeredBodyPartPoseSource MakeCachePoseSource(const FName CachePoseName)
@@ -519,6 +568,7 @@ namespace
 		static bool TryResolveCompiledSource(
 			const FGraphContext& GraphContext,
 			const ELbbLayeredBlendBodyGraphKind GraphKind,
+			const TSet<FName>& ValidInputPoseNames,
 			const TMap<FGuid, FName>& InternalCachePoseNames,
 			const TSet<FName>& ValidNamedCaches,
 			const int32 BodyPartIndex,
@@ -575,6 +625,26 @@ namespace
 							BodyPartIndex,
 							SourceNodeGuid,
 							FString::Printf(TEXT("CachePose '%s' does not exist in Cache Graph."), *NodeData->SourcePose.CachePoseName.ToString()));
+						return false;
+					}
+				}
+				else if (NodeData->SourcePose.Type == ELbbLayeredBodyPartPoseSourceType::InputPose)
+				{
+					if (NodeData->SourcePose.InputPoseName.IsNone())
+					{
+						AddMessage(OutMessages, EMessageSeverity::Error, GraphKind, BodyPartIndex, SourceNodeGuid, TEXT("Input(InputPose) requires a valid InputPoseName."));
+						return false;
+					}
+
+					if (!ValidInputPoseNames.Contains(NodeData->SourcePose.InputPoseName))
+					{
+						AddMessage(
+							OutMessages,
+							EMessageSeverity::Error,
+							GraphKind,
+							BodyPartIndex,
+							SourceNodeGuid,
+							FString::Printf(TEXT("InputPose '%s' does not exist in Definition.InputDefinitions."), *NodeData->SourcePose.InputPoseName.ToString()));
 						return false;
 					}
 				}
@@ -653,6 +723,7 @@ namespace
 		static bool CompileBodyPartGraph(
 			const FLbbLayeredBlendBodyPartGraphModel& GraphModel,
 			const int32 BodyPartIndex,
+			const TSet<FName>& ValidInputPoseNames,
 			const TSet<FName>& ValidNamedCaches,
 			FLbbLayeredBlendBodyPart& OutBodyPart,
 			TArray<FLbbCompileMessage>& OutMessages)
@@ -706,11 +777,12 @@ namespace
 				{
 					return FindInputLink(GraphContext, NodeGuid, PinName);
 				},
-				[&GraphContext, &InternalCachePoseNames, &ValidNamedCaches, &OutMessages, BodyPartIndex](const FGuid& SourceNodeGuid, FLbbLayeredBodyPartPoseSource& OutSourcePose)
+				[&GraphContext, &InternalCachePoseNames, &ValidInputPoseNames, &ValidNamedCaches, &OutMessages, BodyPartIndex](const FGuid& SourceNodeGuid, FLbbLayeredBodyPartPoseSource& OutSourcePose)
 				{
 					return TryResolveCompiledSource(
 						GraphContext,
 						ELbbLayeredBlendBodyGraphKind::BodyPart,
+						ValidInputPoseNames,
 						InternalCachePoseNames,
 						ValidNamedCaches,
 						BodyPartIndex,
@@ -763,6 +835,7 @@ namespace
 				if (!TryResolveCompiledSource(
 						GraphContext,
 						GraphContext.GraphKind,
+						ValidInputPoseNames,
 						InternalCachePoseNames,
 						ValidNamedCaches,
 						BodyPartIndex,
@@ -789,6 +862,7 @@ namespace
 
 		static bool CompileCacheGraph(
 			const FLbbLayeredBlendBodyCacheGraphModel& GraphModel,
+			const TSet<FName>& ValidInputPoseNames,
 			FCompiledCacheGraph& OutCacheGraph,
 			TArray<FLbbCompileMessage>& OutMessages)
 		{
@@ -847,11 +921,12 @@ namespace
 				{
 					return FindInputLink(GraphContext, NodeGuid, PinName);
 				},
-				[&GraphContext, &InternalCachePoseNames, &ValidNamedCaches, &OutMessages](const FGuid& SourceNodeGuid, FLbbLayeredBodyPartPoseSource& OutSourcePose)
+				[&GraphContext, &InternalCachePoseNames, &ValidInputPoseNames, &ValidNamedCaches, &OutMessages](const FGuid& SourceNodeGuid, FLbbLayeredBodyPartPoseSource& OutSourcePose)
 				{
 					return TryResolveCompiledSource(
 						GraphContext,
 						ELbbLayeredBlendBodyGraphKind::Cache,
+						ValidInputPoseNames,
 						InternalCachePoseNames,
 						ValidNamedCaches,
 						INDEX_NONE,
@@ -921,7 +996,7 @@ namespace
 			FVector2D(0.f, 120.f),
 			[](FLbbLayeredBlendBodyGraphNodeData_Input& NodeData)
 			{
-				NodeData.SourcePose.Type = ELbbLayeredBodyPartPoseSourceType::CurrentPose;
+				NodeData.SourcePose.Type = ELbbLayeredBodyPartPoseSourceType::BasePose;
 			});
 		const FGuid ResultGuid = AddNode<FLbbLayeredBlendBodyGraphNodeData_Result>(
 			OutGraphModel,
@@ -942,8 +1017,14 @@ FLbbCompileResult FLbbLayeredBlendBodyGraphCompiler::Compile(const ULbbLayeredBl
 		Result.bSuccess = true;
 		return Result;
 #else
+		TSet<FName> ValidInputPoseNames;
+		CollectInputPoseNames(Definition, ValidInputPoseNames, Result.Messages);
+
 		FCompiledCacheGraph CompiledCacheGraph;
-		CompileCacheGraph(Definition.EditorModel.CacheGraph, CompiledCacheGraph, Result.Messages);
+		if (!HasErrors(Result.Messages))
+		{
+			CompileCacheGraph(Definition.EditorModel.CacheGraph, ValidInputPoseNames, CompiledCacheGraph, Result.Messages);
+		}
 
 		TSet<FName> ValidNamedCaches;
 		for (const FName CacheName : CompiledCacheGraph.NamedCacheNames)
@@ -959,7 +1040,7 @@ FLbbCompileResult FLbbLayeredBlendBodyGraphCompiler::Compile(const ULbbLayeredBl
 			{
 				const FLbbLayeredBlendBodyPartGraphModel& GraphModel = Definition.EditorModel.BodyPartGraphs[BodyPartIndex];
 				FLbbLayeredBlendBodyPart& CompiledBodyPart = CompiledBodyParts.AddDefaulted_GetRef();
-				CompileBodyPartGraph(GraphModel, BodyPartIndex, ValidNamedCaches, CompiledBodyPart, Result.Messages);
+				CompileBodyPartGraph(GraphModel, BodyPartIndex, ValidInputPoseNames, ValidNamedCaches, CompiledBodyPart, Result.Messages);
 			}
 		}
 

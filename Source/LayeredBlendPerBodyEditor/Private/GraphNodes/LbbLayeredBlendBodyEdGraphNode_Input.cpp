@@ -35,6 +35,7 @@ FLbbLayeredBodyPartPoseSource ULbbLayeredBlendBodyEdGraphNode_Input::GetSourcePo
 	FLbbLayeredBodyPartPoseSource SourcePose;
 	SourcePose.Type = SourceType;
 	SourcePose.CachePoseName = CachePoseName;
+	SourcePose.InputPoseName = InputPoseName;
 	return SourcePose;
 }
 
@@ -42,6 +43,7 @@ void ULbbLayeredBlendBodyEdGraphNode_Input::SetSourcePose(const FLbbLayeredBodyP
 {
 	SourceType = InSourcePose.Type;
 	CachePoseName = InSourcePose.CachePoseName;
+	InputPoseName = InSourcePose.InputPoseName;
 	SanitizeSourceSelection();
 }
 
@@ -55,12 +57,53 @@ bool ULbbLayeredBlendBodyEdGraphNode_Input::IsSourceTypeAllowedInCurrentGraph(co
 
 	if (OwningGraph->GraphKind == ELbbLayeredBlendBodyGraphKind::Cache)
 	{
-		return InSourceType == ELbbLayeredBodyPartPoseSourceType::Motion
-			|| InSourceType == ELbbLayeredBodyPartPoseSourceType::BasePose
-			|| InSourceType == ELbbLayeredBodyPartPoseSourceType::OverlayPose;
+		return InSourceType == ELbbLayeredBodyPartPoseSourceType::BasePose
+			|| InSourceType == ELbbLayeredBodyPartPoseSourceType::InputPose
+			|| InSourceType == ELbbLayeredBodyPartPoseSourceType::CurrentPose;
 	}
 
-	return true;
+	return InSourceType == ELbbLayeredBodyPartPoseSourceType::BasePose
+		|| InSourceType == ELbbLayeredBodyPartPoseSourceType::InputPose
+		|| InSourceType == ELbbLayeredBodyPartPoseSourceType::CachePose
+		|| InSourceType == ELbbLayeredBodyPartPoseSourceType::CurrentPose;
+}
+
+TArray<ELbbLayeredBodyPartPoseSourceType> ULbbLayeredBlendBodyEdGraphNode_Input::GetAvailableSourceTypes() const
+{
+	TArray<ELbbLayeredBodyPartPoseSourceType> Result;
+	static const ELbbLayeredBodyPartPoseSourceType SourceTypeOptions[] = {
+		ELbbLayeredBodyPartPoseSourceType::BasePose,
+		ELbbLayeredBodyPartPoseSourceType::CachePose,
+		ELbbLayeredBodyPartPoseSourceType::InputPose,
+	};
+
+	for (const ELbbLayeredBodyPartPoseSourceType SourceTypeOption : SourceTypeOptions)
+	{
+		if (IsSourceTypeAllowedInCurrentGraph(SourceTypeOption))
+		{
+			Result.Add(SourceTypeOption);
+		}
+	}
+
+	return Result;
+}
+
+bool ULbbLayeredBlendBodyEdGraphNode_Input::IsAvailableInputPose(FName InInputPoseName) const
+{
+	if (InInputPoseName.IsNone())
+	{
+		return false;
+	}
+
+	for (const FString& Option : GetAvailableInputPoseOptions())
+	{
+		if (Option == InInputPoseName.ToString())
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 bool ULbbLayeredBlendBodyEdGraphNode_Input::IsAvailableNamedCache(const FName InCachePoseName) const
@@ -85,7 +128,17 @@ void ULbbLayeredBlendBodyEdGraphNode_Input::SanitizeSourceSelection()
 {
 	if (!IsSourceTypeAllowedInCurrentGraph(SourceType))
 	{
-		SourceType = ELbbLayeredBodyPartPoseSourceType::Motion;
+		SourceType = ELbbLayeredBodyPartPoseSourceType::BasePose;
+	}
+
+	if (SourceType != ELbbLayeredBodyPartPoseSourceType::InputPose)
+	{
+		InputPoseName = NAME_None;
+	}
+	else if (!IsAvailableInputPose(InputPoseName))
+	{
+		const TArray<FString> AvailableOptions = GetAvailableInputPoseOptions();
+		InputPoseName = AvailableOptions.IsEmpty() ? NAME_None : FName(*AvailableOptions[0]);
 	}
 
 	if (SourceType != ELbbLayeredBodyPartPoseSourceType::CachePose)
@@ -99,6 +152,31 @@ void ULbbLayeredBlendBodyEdGraphNode_Input::SanitizeSourceSelection()
 		const TArray<FString> AvailableOptions = GetAvailableCachePoseOptions();
 		CachePoseName = AvailableOptions.IsEmpty() ? NAME_None : FName(*AvailableOptions[0]);
 	}
+}
+
+TArray<FString> ULbbLayeredBlendBodyEdGraphNode_Input::GetAvailableInputPoseOptions() const
+{
+	TArray<FString> Result;
+
+	const ULbbLayeredBlendBodyDefinition* Definition = GetOwningDefinition();
+	if (Definition == nullptr)
+	{
+		return Result;
+	}
+
+	TSet<FName> UniqueNames;
+	for (const FLbbLayeredBlendBodyInputDefinition& InputDefinition : Definition->InputDefinitions)
+	{
+		if (InputDefinition.InputName.IsNone() || UniqueNames.Contains(InputDefinition.InputName))
+		{
+			continue;
+		}
+
+		UniqueNames.Add(InputDefinition.InputName);
+		Result.Add(InputDefinition.InputName.ToString());
+	}
+
+	return Result;
 }
 
 TArray<FString> ULbbLayeredBlendBodyEdGraphNode_Input::GetAvailableCachePoseOptions() const
@@ -158,12 +236,20 @@ void ULbbLayeredBlendBodyEdGraphNode_Input::ExportNodeData(FInstancedStruct& Out
 #if WITH_EDITOR
 bool ULbbLayeredBlendBodyEdGraphNode_Input::CanEditChange(const FProperty* InProperty) const
 {
-	if (InProperty != nullptr && InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(ULbbLayeredBlendBodyEdGraphNode_Input, CachePoseName))
+	if (InProperty != nullptr)
 	{
-		const ULbbLayeredBlendBodyEdGraph* OwningGraph = GetOwningLayeredBlendGraph();
-		return SourceType == ELbbLayeredBodyPartPoseSourceType::CachePose
-			&& OwningGraph != nullptr
-			&& OwningGraph->GraphKind == ELbbLayeredBlendBodyGraphKind::BodyPart;
+		if (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(ULbbLayeredBlendBodyEdGraphNode_Input, InputPoseName))
+		{
+			return SourceType == ELbbLayeredBodyPartPoseSourceType::InputPose;
+		}
+
+		if (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(ULbbLayeredBlendBodyEdGraphNode_Input, CachePoseName))
+		{
+			const ULbbLayeredBlendBodyEdGraph* OwningGraph = GetOwningLayeredBlendGraph();
+			return SourceType == ELbbLayeredBodyPartPoseSourceType::CachePose
+				&& OwningGraph != nullptr
+				&& OwningGraph->GraphKind == ELbbLayeredBlendBodyGraphKind::BodyPart;
+		}
 	}
 
 	return Super::CanEditChange(InProperty);

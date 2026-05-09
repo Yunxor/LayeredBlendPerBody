@@ -18,6 +18,7 @@ struct FLbbOperatorRequirements
 	bool bNeedsOverlayPose = false;
 	bool bNeedsSlotEvaluation = false;
 	bool bCanAffectCurrentPose = false;
+	TSet<FName> UsedInputPoseNames;
 };
 
 enum class ELbbCompiledPoseSourceKind : uint8
@@ -27,6 +28,7 @@ enum class ELbbCompiledPoseSourceKind : uint8
 	OverlayPose,
 	CurrentPose,
 	CacheSlot,
+	InputPose,
 };
 
 enum class ELbbCompiledPoseTargetKind : uint8
@@ -39,6 +41,7 @@ struct FLbbCompiledPoseSource
 {
 	ELbbCompiledPoseSourceKind Kind = ELbbCompiledPoseSourceKind::CurrentPose;
 	int32 PoseIndex = INDEX_NONE;
+	FName PoseName = NAME_None;
 };
 
 struct FLbbCompiledPoseTarget
