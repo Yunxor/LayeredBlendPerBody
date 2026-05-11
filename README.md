@@ -52,18 +52,15 @@
 
 #### `Input`
 
-统一输入节点，作者不再面对一组固定输入节点，而是通过属性选择来源：
+统一输入节点，作者不再面对一组固定输入节点，而是通过名字选择来源：
 
-- `Motion`
-- `BasePose`
-- `OverlayPose`
-- `CurrentPose`
-- `CachePose`
+- BasePose
+- 自由新增任意InputPose，最终将会以Name的形式与AnimNode的Name进行匹配。
 
 其中：
 
-- `Cache Graph` 中只允许读取 `Motion / BasePose / OverlayPose`
-- `BodyPart Graph` 中允许读取 `CurrentPose / Motion / BasePose / OverlayPose / CachePose`
+- `Cache Graph` 中只允许读取 `BasePose / Custom InputPose`
+- `BodyPart Graph` 中允许读取 `BasePose / Custom InputPose / CachePose`
 
 #### `CachePose`
 
@@ -150,7 +147,9 @@
   - 查看当前图编译后的运行时 operator 结果
 - `Compile Messages`
   - 查看编译错误、警告、性能提示
-
+- `Inputs`
+  - 右侧输入面板
+  - 用于Input Pose 的增、删、改、查。
 ### 2.3 基本编辑流程
 
 推荐按下面顺序使用：
@@ -158,12 +157,13 @@
 1. 先打开 `Cache Graph`
 2. 根据需要添加 `Input / Blend / Masked Blend / Make Additive / Apply Additive / Save Pose`
 3. 用 `Save Pose` 产出供后续 BodyPart 使用的命名缓存
-4. 新增一个或多个 `BodyPart`
-5. 在各自的 `BodyPart Graph` 中通过 `Input(CachePose)` 读取公共缓存
-6. 用 `Apply Slot / Blend / Masked Blend / Apply Additive` 完成每个 BodyPart 的姿势处理
-7. 确保 `BodyPart Graph` 的结果连到 `Result`
-8. 点击工具栏 `Compile`
-9. 确认 `Compile Messages` 没有错误后再保存资产
+4. 在 `Inputs` 界面新增 Input Pose，命名最好能在AnimNode的`InputPoseAliases`中有所对应，否则将会变为`Current Pose`
+5. 新增一个或多个 `BodyPart`
+6. 在各自的 `BodyPart Graph` 中通过 `Input(CachePose)` 读取公共缓存
+7. 用 `Apply Slot / Blend / Masked Blend / Apply Additive` 完成每个 BodyPart 的姿势处理
+8. 确保 `BodyPart Graph` 的结果连到 `Result`
+9. 点击工具栏 `Compile`
+10. 确认 `Compile Messages` 没有错误后再保存资产
 
 ### 2.4 BodyPart 管理
 
@@ -233,26 +233,14 @@
 
 - `FLbbAnimNode_LayeredBodyPartBlend`
 
-它暴露了三路姿势输入：
+它暴露了多种姿势输入：
 
-- `Motion`
-- `BasePose`
-- `OverlayPose`
+- `BasePose`：基础的Pose
+- `InputPoses` ：可以自定义输入Pose，对应的命名将在`InputPoseAliases`中体现
 
 以及一个定义资产：
 
 - `BodyDefinition`
-
-推荐理解方式：
-
-- `Motion`
-  - 主运动姿势
-- `BasePose`
-  - 供某些混合逻辑使用的基础姿势
-- `OverlayPose`
-  - 供叠加或上层逻辑使用的姿势
-
-如果某个图没有实际读取 `BasePose` 或 `OverlayPose`，运行时不会额外评估对应输入。
 
 ### 2.8 使用建议
 
