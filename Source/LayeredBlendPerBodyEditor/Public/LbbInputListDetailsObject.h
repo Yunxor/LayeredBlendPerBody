@@ -15,4 +15,14 @@ class LAYEREDBLENDPERBODYEDITOR_API ULbbInputListDetailsObject : public UObject
 public:
 	UPROPERTY(EditAnywhere, Category = "Inputs", meta = (TitleProperty = "InputName"))
 	TArray<FLbbInputPoseDefinition> InputDefinitions;
+
+	void NormalizeInputDefinitions(bool bNotifyIfBasePoseWasRestored = false);
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent) override;
+#endif
+
+private:
+	bool bIsNormalizingInputDefinitions = false;
 };

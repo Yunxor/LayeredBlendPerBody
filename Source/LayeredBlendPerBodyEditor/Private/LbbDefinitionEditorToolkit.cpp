@@ -1087,16 +1087,15 @@ void FLbbDefinitionEditorToolkit::SyncInputDefinitionsToModel()
 		return;
 	}
 
-	TArray<FLbbInputPoseDefinition> NormalizedInputDefinitions = InputListDetailsObject->InputDefinitions;
-	Lbb::NormalizeInputPoseDefinitions(NormalizedInputDefinitions);
+	InputListDetailsObject->NormalizeInputDefinitions();
 
-	if (AreInputDefinitionsEqual(Definition->InputPoseDefinitions, NormalizedInputDefinitions))
+	if (AreInputDefinitionsEqual(Definition->InputPoseDefinitions, InputListDetailsObject->InputDefinitions))
 	{
 		return;
 	}
 
 	Definition->Modify();
-	Definition->InputPoseDefinitions = MoveTemp(NormalizedInputDefinitions);
+	Definition->InputPoseDefinitions = InputListDetailsObject->InputDefinitions;
 	Definition->MarkPackageDirty();
 }
 
@@ -1137,7 +1136,7 @@ void FLbbDefinitionEditorToolkit::RefreshInputDetailsObject()
 	if (Definition == nullptr)
 	{
 		InputListDetailsObject->InputDefinitions.Reset();
-		Lbb::NormalizeInputPoseDefinitions(InputListDetailsObject->InputDefinitions);
+		InputListDetailsObject->NormalizeInputDefinitions();
 		if (InputDetailsView.IsValid())
 		{
 			InputDetailsView->SetObject(InputListDetailsObject.Get());
@@ -1146,7 +1145,7 @@ void FLbbDefinitionEditorToolkit::RefreshInputDetailsObject()
 	}
 
 	InputListDetailsObject->InputDefinitions = Definition->InputPoseDefinitions;
-	Lbb::NormalizeInputPoseDefinitions(InputListDetailsObject->InputDefinitions);
+	InputListDetailsObject->NormalizeInputDefinitions();
 
 	if (InputDetailsView.IsValid())
 	{
